@@ -43,6 +43,7 @@ class Config:
 
 config = Config()
 
+# load dataset and operate ZCA whitening
 def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
 
     class_map = None
@@ -85,8 +86,9 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         channel = 3
         im_size = (128, 128)
         num_classes = 10
-
-        config.img_net_classes = config.dict[subset]  # config.dict[subset] = imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]，因此config.img_net_classes是一个类别标签列表
+        
+        # 类别标签list
+        config.img_net_classes = config.dict[subset]  # dict[subset]=imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
@@ -296,6 +298,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
 def get_time():
     return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
 
+
+
 # 训练/测试模型的一次迭代
 def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
     loss_avg, acc_avg, num_exp = 0, 0, 0  # num_exp 样本数量
@@ -393,6 +397,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         return net, acc_train_list, acc_test
 
 
+# 数据增强
 def augment(images, dc_aug_param, device):
     # This can be sped up in the future.
 
@@ -455,7 +460,7 @@ def augment(images, dc_aug_param, device):
     return images
 
 
-
+# obtain data augmentation parameters
 def get_daparam(dataset, model, model_eval, ipc):
     # We find that augmentation doesn't always benefit the performance.
     # So we do augmentation for some of the settings.
@@ -476,22 +481,23 @@ def get_daparam(dataset, model, model_eval, ipc):
     return dc_aug_param
 
 
+# obtain 用于评估的模型 list: 根据不同的 evaluate mode 确定对应的 model_eval_pool
 def get_eval_pool(eval_mode, model, model_eval):
     if eval_mode == 'M': # multiple architectures
         # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18', 'LeNet']
         model_eval_pool = ['ConvNet', 'AlexNet', 'VGG11', 'ResNet18_AP', 'ResNet18']
         # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18']
-    elif eval_mode == 'W': # ablation study on network width
+    elif eval_mode == 'W': # ablation study on network Width
         model_eval_pool = ['ConvNetW32', 'ConvNetW64', 'ConvNetW128', 'ConvNetW256']
-    elif eval_mode == 'D': # ablation study on network depth
+    elif eval_mode == 'D': # ablation study on network Depth
         model_eval_pool = ['ConvNetD1', 'ConvNetD2', 'ConvNetD3', 'ConvNetD4']
-    elif eval_mode == 'A': # ablation study on network activation function
+    elif eval_mode == 'A': # ablation study on network Activation Function
         model_eval_pool = ['ConvNetAS', 'ConvNetAR', 'ConvNetAL']
-    elif eval_mode == 'P': # ablation study on network pooling layer
+    elif eval_mode == 'P': # ablation study on network Pooling Layer
         model_eval_pool = ['ConvNetNP', 'ConvNetMP', 'ConvNetAP']
-    elif eval_mode == 'N': # ablation study on network normalization layer
+    elif eval_mode == 'N': # ablation study on network Normalization Layer
         model_eval_pool = ['ConvNetNN', 'ConvNetBN', 'ConvNetLN', 'ConvNetIN', 'ConvNetGN']
-    elif eval_mode == 'S': # itself
+    elif eval_mode == 'S': # itSelf
         model_eval_pool = [model[:model.index('BN')]] if 'BN' in model else [model]
     elif eval_mode == 'C':
         model_eval_pool = [model, 'ConvNet']
