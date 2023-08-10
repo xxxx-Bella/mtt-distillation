@@ -43,6 +43,7 @@ class Config:
 
 config = Config()
 
+
 # load dataset and operate ZCA whitening
 def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
 
@@ -63,8 +64,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         dst_train = datasets.CIFAR10(data_path, train=True, download=True, transform=transform) # no augmentation
         dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
-        class_map = {x:x for x in range(num_classes)}  # 一个字典，用于将原始类别标签x 映射 为新的类别标签x
-
+        class_map = {x: x for x in range(num_classes)}  # 一个字典，用于将原始类别标签x 映射 为新的类别标签x
 
     elif dataset == 'Tiny':
         channel = 3
@@ -79,14 +79,13 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         dst_train = datasets.ImageFolder(os.path.join(data_path, "train"), transform=transform) # no augmentation
         dst_test = datasets.ImageFolder(os.path.join(data_path, "val", "images"), transform=transform)
         class_names = dst_train.classes
-        class_map = {x:x for x in range(num_classes)}
-
+        class_map = {x: x for x in range(num_classes)}
 
     elif dataset == 'ImageNet':
         channel = 3
         im_size = (128, 128)
         num_classes = 10
-        
+
         # 类别标签list
         config.img_net_classes = config.dict[subset]  # dict[subset]=imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
@@ -103,9 +102,11 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
                                             transforms.CenterCrop(im_size)])
 
         dst_train = datasets.ImageNet(data_path, split="train", transform=transform) # no augmentation
-        dst_train_dict = {c : torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.equal(dst_train.targets, config.img_net_classes[c])))) for c in range(len(config.img_net_classes))}
+        dst_train_dict = {c: torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.equal(dst_train.targets, config.img_net_classes[c])))) 
+                          for c in range(len(config.img_net_classes))}
         dst_train = torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.isin(dst_train.targets, config.img_net_classes))))
-        loader_train_dict = {c : torch.utils.data.DataLoader(dst_train_dict[c], batch_size=batch_size, shuffle=True, num_workers=16) for c in range(len(config.img_net_classes))}
+        loader_train_dict = {c: torch.utils.data.DataLoader(dst_train_dict[c], batch_size=batch_size, shuffle=True, num_workers=16) 
+                             for c in range(len(config.img_net_classes))}
         dst_test = datasets.ImageNet(data_path, split="val", transform=transform)
         dst_test = torch.utils.data.Subset(dst_test, np.squeeze(np.argwhere(np.isin(dst_test.targets, config.img_net_classes))))
         for c in range(len(config.img_net_classes)):
@@ -115,7 +116,6 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_map = {x: i for i, x in enumerate(config.img_net_classes)}
         class_map_inv = {i: x for i, x in enumerate(config.img_net_classes)}
         class_names = None
-
 
     elif dataset.startswith('CIFAR100'):
         channel = 3
@@ -134,7 +134,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_map = {x: x for x in range(num_classes)}
 
     else:
-        exit('unknown dataset: %s'%dataset)
+        exit('unknown dataset: %s' % dataset)
 
     if args.zca:
         images = []
@@ -166,16 +166,13 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
 
         args.zca_trans = zca
 
-
     testloader = torch.utils.data.DataLoader(dst_test, batch_size=128, shuffle=False, num_workers=2)
-
 
     return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv
 
 
-
 class TensorDataset(Dataset):
-    def __init__(self, images, labels): # images: n x c x h x w tensor
+    def __init__(self, images, labels):  # images: n x c x h x w tensor
         self.images = images.detach().float()
         self.labels = labels.detach()
 
@@ -186,11 +183,9 @@ class TensorDataset(Dataset):
         return self.images.shape[0]
 
 
-
 def get_default_convnet_setting():
     net_width, net_depth, net_act, net_norm, net_pooling = 128, 3, 'relu', 'instancenorm', 'avgpooling'
     return net_width, net_depth, net_act, net_norm, net_pooling
-
 
 
 def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
@@ -276,7 +271,6 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
     elif model == 'ConvNetAP':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling')
 
-
     else:
         net = None
         exit('DC error: unknown model')
@@ -294,10 +288,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
     return net
 
 
-
 def get_time():
     return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
-
 
 
 # 训练/测试模型的一次迭代
@@ -320,16 +312,19 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 
         # texture 纹理增强操作
         if mode == "train" and texture:
-            img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), torch.randint(args.im_size[0]*args.canvas_size, (1,))), (1,2))[:,:args.im_size[0],:args.im_size[1]] for im in img]) for _ in range(args.canvas_samples)])
+            img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), 
+                                                          torch.randint(args.im_size[0]*args.canvas_size, (1,))), 
+                                                     (1, 2))[:, :args.im_size[0], :args.im_size[1]] for im in img]) 
+                             for _ in range(args.canvas_samples)])
             lab = torch.cat([lab for _ in range(args.canvas_samples)])
-        
+
         # 数据增强操作
         if aug:
             if args.dsa:
                 img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
             else:
                 img = augment(img, args.dc_aug_param, device=args.device)
-        
+
         # eval模式，将标签进行映射
         if args.dataset == "ImageNet" and mode != "train": 
             lab = torch.tensor([class_map[x.item()] for x in lab]).to(args.device)
@@ -354,7 +349,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     acc_avg /= num_exp
 
     return loss_avg, acc_avg
-
 
 
 def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False):
@@ -386,7 +380,6 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
             lr *= 0.1
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 
-
     time_train = time.time() - start
 
     print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
@@ -401,7 +394,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 def augment(images, dc_aug_param, device):
     # This can be sped up in the future.
 
-    if dc_aug_param != None and dc_aug_param['strategy'] != 'none':
+    if dc_aug_param is not None and dc_aug_param['strategy'] != 'none':
         scale = dc_aug_param['scale']
         crop = dc_aug_param['crop']
         rotate = dc_aug_param['rotate']
@@ -411,10 +404,10 @@ def augment(images, dc_aug_param, device):
         shape = images.shape
         mean = []
         for c in range(shape[1]):
-            mean.append(float(torch.mean(images[:,c])))
+            mean.append(float(torch.mean(images[:, c])))
 
         def cropfun(i):
-            im_ = torch.zeros(shape[1],shape[2]+crop*2,shape[3]+crop*2, dtype=torch.float, device=device)
+            im_ = torch.zeros(shape[1], shape[2]+crop*2, shape[3]+crop*2, dtype=torch.float, device=device)
             for c in range(shape[1]):
                 im_[c] = mean[c]
             im_[:, crop:crop+shape[2], crop:crop+shape[3]] = images[i]
@@ -443,11 +436,10 @@ def augment(images, dc_aug_param, device):
         def noisefun(i):
             images[i] = images[i] + noise * torch.randn(shape[1:], dtype=torch.float, device=device)
 
-
         augs = strategy.split('_')
 
         for i in range(shape[0]):
-            choice = np.random.permutation(augs)[0] # randomly implement one augmentation
+            choice = np.random.permutation(augs)[0]  # randomly implement one augmentation
             if choice == 'crop':
                 cropfun(i)
             elif choice == 'scale':
@@ -483,21 +475,21 @@ def get_daparam(dataset, model, model_eval, ipc):
 
 # obtain 用于评估的模型 list: 根据不同的 evaluate mode 确定对应的 model_eval_pool
 def get_eval_pool(eval_mode, model, model_eval):
-    if eval_mode == 'M': # multiple architectures
+    if eval_mode == 'M':  # multiple architectures
         # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18', 'LeNet']
         model_eval_pool = ['ConvNet', 'AlexNet', 'VGG11', 'ResNet18_AP', 'ResNet18']
         # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18']
-    elif eval_mode == 'W': # ablation study on network Width
+    elif eval_mode == 'W':  # ablation study on network Width
         model_eval_pool = ['ConvNetW32', 'ConvNetW64', 'ConvNetW128', 'ConvNetW256']
-    elif eval_mode == 'D': # ablation study on network Depth
+    elif eval_mode == 'D':  # ablation study on network Depth
         model_eval_pool = ['ConvNetD1', 'ConvNetD2', 'ConvNetD3', 'ConvNetD4']
-    elif eval_mode == 'A': # ablation study on network Activation Function
+    elif eval_mode == 'A':  # ablation study on network Activation Function
         model_eval_pool = ['ConvNetAS', 'ConvNetAR', 'ConvNetAL']
-    elif eval_mode == 'P': # ablation study on network Pooling Layer
+    elif eval_mode == 'P':  # ablation study on network Pooling Layer
         model_eval_pool = ['ConvNetNP', 'ConvNetMP', 'ConvNetAP']
-    elif eval_mode == 'N': # ablation study on network Normalization Layer
+    elif eval_mode == 'N':  # ablation study on network Normalization Layer
         model_eval_pool = ['ConvNetNN', 'ConvNetBN', 'ConvNetLN', 'ConvNetIN', 'ConvNetGN']
-    elif eval_mode == 'S': # itSelf
+    elif eval_mode == 'S':  # itSelf
         model_eval_pool = [model[:model.index('BN')]] if 'BN' in model else [model]
     elif eval_mode == 'C':
         model_eval_pool = [model, 'ConvNet']
@@ -508,12 +500,12 @@ def get_eval_pool(eval_mode, model, model_eval):
 
 class ParamDiffAug():
     def __init__(self):
-        self.aug_mode = 'S' #'multiple or single'
+        self.aug_mode = 'S'  #'multiple or single'
         self.prob_flip = 0.5
         self.ratio_scale = 1.2
         self.ratio_rotate = 15.0
         self.ratio_crop_pad = 0.125
-        self.ratio_cutout = 0.5 # the size would be 0.5x0.5
+        self.ratio_cutout = 0.5  # the size would be 0.5x0.5
         self.ratio_noise = 0.05
         self.brightness = 1.0
         self.saturation = 2.0
@@ -540,7 +532,7 @@ def DiffAugment(x, strategy='', seed = -1, param = None):
         return x
 
     if strategy:
-        if param.aug_mode == 'M': # original
+        if param.aug_mode == 'M':  # original
             for p in strategy.split('_'):
                 for f in AUGMENT_FNS[p]:
                     x = f(x, param)
@@ -566,23 +558,23 @@ def rand_scale(x, param):
     set_seed_DiffAug(param)
     sy = torch.rand(x.shape[0]) * (ratio - 1.0/ratio) + 1.0/ratio
     theta = [[[sx[i], 0,  0],
-            [0,  sy[i], 0],] for i in range(x.shape[0])]
+              [0,  sy[i], 0], ] for i in range(x.shape[0])]
     theta = torch.tensor(theta, dtype=torch.float)
-    if param.batchmode: # batch-wise:
+    if param.batchmode:  # batch-wise:
         theta[:] = theta[0]
     grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
     x = F.grid_sample(x, grid, align_corners=True)
     return x
 
 
-def rand_rotate(x, param): # [-180, 180], 90: anticlockwise 90 degree
+def rand_rotate(x, param):  # [-180, 180], 90: anticlockwise 90 degree
     ratio = param.ratio_rotate
     set_seed_DiffAug(param)
     theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
     theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
-        [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
+              [torch.sin(theta[i]), torch.cos(theta[i]),  0], ] for i in range(x.shape[0])]
     theta = torch.tensor(theta, dtype=torch.float)
-    if param.batchmode: # batch-wise:
+    if param.batchmode:  # batch-wise:
         theta[:] = theta[0]
     grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
     x = F.grid_sample(x, grid, align_corners=True)
@@ -593,7 +585,7 @@ def rand_flip(x, param):
     prob = param.prob_flip
     set_seed_DiffAug(param)
     randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
-    if param.batchmode: # batch-wise:
+    if param.batchmode:  # batch-wise:
         randf[:] = randf[0]
     return torch.where(randf < prob, x.flip(3), x)
 

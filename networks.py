@@ -8,11 +8,12 @@ import torch
 # adapted from
 # https://github.com/VICO-UoE/DatasetCondensation
 
+
 ''' MLP '''
 class MLP(nn.Module):
     def __init__(self, channel, num_classes):
         super(MLP, self).__init__()
-        self.fc_1 = nn.Linear(28*28*1 if channel==1 else 32*32*3, 128)
+        self.fc_1 = nn.Linear(28*28*1 if channel == 1 else 32*32*3, 128)
         self.fc_2 = nn.Linear(128, 128)
         self.fc_3 = nn.Linear(128, num_classes)
 
@@ -22,7 +23,6 @@ class MLP(nn.Module):
         out = F.relu(self.fc_2(out))
         out = self.fc_3(out)
         return out
-
 
 
 ''' ConvNet '''
@@ -93,7 +93,6 @@ class ConvNet(nn.Module):
                 layers += [self._get_pooling(net_pooling)]
                 shape_feat[1] //= 2
                 shape_feat[2] //= 2
-
 
         return nn.Sequential(*layers), shape_feat
 
@@ -197,7 +196,6 @@ class LeNet(nn.Module):
         return x
 
 
-
 ''' AlexNet '''
 class AlexNet(nn.Module):
     def __init__(self, channel, num_classes):
@@ -226,7 +224,6 @@ class AlexNet(nn.Module):
         return x
 
 
-
 ''' VGG '''
 cfg_vgg = {
     'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -234,6 +231,8 @@ cfg_vgg = {
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 }
+
+
 class VGG(nn.Module):
     def __init__(self, vgg_name, channel, num_classes, norm='instancenorm'):
         super(VGG, self).__init__()
@@ -264,19 +263,26 @@ class VGG(nn.Module):
 
 def VGG11(channel, num_classes):
     return VGG('VGG11', channel, num_classes)
+
+
 def VGG11BN(channel, num_classes):
     return VGG('VGG11', channel, num_classes, norm='batchnorm')
+
+
 def VGG13(channel, num_classes):
     return VGG('VGG13', channel, num_classes)
+
+
 def VGG16(channel, num_classes):
     return VGG('VGG16', channel, num_classes)
+
+
 def VGG19(channel, num_classes):
     return VGG('VGG19', channel, num_classes)
 
 
 ''' ResNet_AP '''
 # The conv(stride=2) is replaced by conv(stride=1) + avgpool(kernel_size=2, stride=2)
-
 class BasicBlock_AP(nn.Module):
     expansion = 1
 
@@ -299,7 +305,7 @@ class BasicBlock_AP(nn.Module):
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
-        if self.stride != 1: # modification
+        if self.stride != 1:  # modification
             out = F.avg_pool2d(out, kernel_size=2, stride=2)
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
@@ -375,10 +381,11 @@ class ResNet_AP(nn.Module):
 
 
 def ResNet18BN_AP(channel, num_classes):
-    return ResNet_AP(BasicBlock_AP, [2,2,2,2], channel=channel, num_classes=num_classes, norm='batchnorm')
+    return ResNet_AP(BasicBlock_AP, [2, 2, 2, 2], channel=channel, num_classes=num_classes, norm='batchnorm')
+
 
 def ResNet18_AP(channel, num_classes):
-    return ResNet_AP(BasicBlock_AP, [2,2,2,2], channel=channel, num_classes=num_classes)
+    return ResNet_AP(BasicBlock_AP, [2, 2, 2, 2], channel=channel, num_classes=num_classes)
 
 
 ''' ResNet '''
@@ -512,25 +519,32 @@ class ResNetImageNet(nn.Module):
 
 
 def ResNet18BN(channel, num_classes):
-    return ResNet(BasicBlock, [2,2,2,2], channel=channel, num_classes=num_classes, norm='batchnorm')
+    return ResNet(BasicBlock, [2, 2, 2, 2], channel=channel, num_classes=num_classes, norm='batchnorm')
+
 
 def ResNet18(channel, num_classes):
-    return ResNet(BasicBlock, [2,2,2,2], channel=channel, num_classes=num_classes)
+    return ResNet(BasicBlock, [2, 2, 2, 2], channel=channel, num_classes=num_classes)
+
 
 def ResNet34(channel, num_classes):
-    return ResNet(BasicBlock, [3,4,6,3], channel=channel, num_classes=num_classes)
+    return ResNet(BasicBlock, [3, 4, 6, 3], channel=channel, num_classes=num_classes)
+
 
 def ResNet50(channel, num_classes):
-    return ResNet(Bottleneck, [3,4,6,3], channel=channel, num_classes=num_classes)
+    return ResNet(Bottleneck, [3, 4, 6, 3], channel=channel, num_classes=num_classes)
+
 
 def ResNet101(channel, num_classes):
-    return ResNet(Bottleneck, [3,4,23,3], channel=channel, num_classes=num_classes)
+    return ResNet(Bottleneck, [3, 4, 23, 3], channel=channel, num_classes=num_classes)
+
 
 def ResNet152(channel, num_classes):
-    return ResNet(Bottleneck, [3,8,36,3], channel=channel, num_classes=num_classes)
+    return ResNet(Bottleneck, [3, 8, 36, 3], channel=channel, num_classes=num_classes)
+
 
 def ResNet18ImageNet(channel, num_classes):
-    return ResNetImageNet(BasicBlock, [2,2,2,2], channel=channel, num_classes=num_classes)
+    return ResNetImageNet(BasicBlock, [2, 2, 2, 2], channel=channel, num_classes=num_classes)
+
 
 def ResNet6ImageNet(channel, num_classes):
-    return ResNetImageNet(BasicBlock, [1,1,1,1], channel=channel, num_classes=num_classes)
+    return ResNetImageNet(BasicBlock, [1, 1, 1, 1], channel=channel, num_classes=num_classes)

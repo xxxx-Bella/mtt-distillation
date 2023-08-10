@@ -18,6 +18,7 @@ from reparam_module import ReparamModule
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
 def main(args):
     # 参数检查
     if args.zca and args.texture:
@@ -30,9 +31,10 @@ def main(args):
         args.total_experts = args.max_experts * args.max_files
 
     print("CUDNN STATUS: {}".format(torch.backends.cudnn.enabled))
-    
-    ## 初始化配置
+
+    # # 初始化配置
     # Input: A: Differentiable augmentation function
+    # DSA 的目标是生成合成数据
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # 用于评估 D_syn 性能的迭代次数(等差数列list)
@@ -107,7 +109,6 @@ def main(args):
     for ch in range(channel):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
 
-
     def get_images(c, n):  # get random n images from class c
         idx_shuffle = np.random.permutation(indices_class[c])[:n]
         return images_all[idx_shuffle]
@@ -129,27 +130,25 @@ def main(args):
             for c in range(num_classes):
                 for i in range(args.canvas_size):
                     for j in range(args.canvas_size):
-                        image_syn.data[c * args.ipc:(c + 1) * args.ipc, :, i * im_size[0]:(i + 1) * im_size[0],
-                        j * im_size[1]:(j + 1) * im_size[1]] = torch.cat(
+                        image_syn.data[c * args.ipc:(c + 1) * args.ipc, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat(
                             [get_images(c, 1).detach().data for s in range(args.ipc)])
         for c in range(num_classes):
             image_syn.data[c * args.ipc:(c + 1) * args.ipc] = get_images(c, args.ipc).detach().data
     else:  # 'noise'
         print('initialize synthetic data from random noise')
 
-
     ''' training '''
     # line 2: Initialize trainable learning rate α := α0 for apply D_syn
     image_syn = image_syn.detach().to(args.device).requires_grad_(True)
     syn_lr = syn_lr.detach().to(args.device).requires_grad_(True)
-    
+
     # 创建优化器
     optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)
     optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)
     optimizer_img.zero_grad()
     # 定义损失函数
     criterion = nn.CrossEntropyLoss().to(args.device)
-    print('%s training begins'%get_time())
+    print('%s training begins' % get_time())
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
     if args.dataset == "ImageNet":
@@ -158,9 +157,9 @@ def main(args):
         expert_dir += "_NO_ZCA"
     expert_dir = os.path.join(expert_dir, args.model)
     print("Expert Dir: {}".format(expert_dir))
-    
+
     # Input: {τ∗_i}: set of expert parameter trajectories trained on D_real
-    # 加载提前训练好的 expert trajectory 
+    # 加载提前训练好的 expert trajectory
     if args.load_all:  # 从已有的缓冲区文件中 load 所有数据到 buffer 中
         buffer = []
         n = 0
@@ -176,8 +175,9 @@ def main(args):
         while os.path.exists(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n))):
             expert_files.append(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n)))
             n += 1
-        if n == 0:
-            raise AssertionError("No buffers detected at {}".format(expert_dir))
+        # change: 注释下面两行
+        # if n == 0:
+        #     raise AssertionError("No buffers detected at {}".format(expert_dir))
         file_idx = 0
         expert_idx = 0
         random.shuffle(expert_files)
@@ -200,7 +200,7 @@ def main(args):
 
         # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
-        
+
         # 对 D_syn 进行评估
         ''' Evaluate synthetic data '''
         if it in eval_it_pool:
@@ -338,7 +338,7 @@ def main(args):
                 random.shuffle(buffer)
         # line 5: Choose random start epoch
         start_epoch = np.random.randint(0, args.max_start_epoch)
-        
+
         # line 6, 7: Initialize student network with expert params
         starting_params = expert_trajectory[start_epoch]
 
@@ -366,12 +366,14 @@ def main(args):
 
             these_indices = indices_chunks.pop()
 
-
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
             if args.texture:
-                x = torch.cat([torch.stack([torch.roll(im, (torch.randint(im_size[0]*args.canvas_size, (1,)), torch.randint(im_size[1]*args.canvas_size, (1,))), (1,2))[:,:im_size[0],:im_size[1]] for im in x]) for _ in range(args.canvas_samples)])
+                x = torch.cat([torch.stack([torch.roll(im, (torch.randint(im_size[0]*args.canvas_size, (1,)), 
+                                                            torch.randint(im_size[1]*args.canvas_size, (1,))), 
+                                                       (1, 2))[:, :im_size[0], :im_size[1]] for im in x])
+                               for _ in range(args.canvas_samples)])
                 this_y = torch.cat([this_y for _ in range(args.canvas_samples)])
 
             if args.dsa and (not args.no_aug):
@@ -381,7 +383,7 @@ def main(args):
                 forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)
             else:
                 forward_params = student_params[-1]
-            
+
             x = student_net(x, flat_param=forward_params)
             ce_loss = criterion(x, this_y)
 
@@ -392,13 +394,12 @@ def main(args):
         # line 14, 15: computing loss between ending student and expert params
         param_loss = torch.tensor(0.0).to(args.device)
         param_dist = torch.tensor(0.0).to(args.device)
-        
+
         param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")  # ending student, expert params
         param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")  # 
 
         param_loss_list.append(param_loss)
         param_dist_list.append(param_dist)
-
 
         param_loss /= num_params
         param_dist /= num_params
@@ -421,9 +422,9 @@ def main(args):
 
         for _ in student_params:
             del _
-        
+
         # 打印训练进度：每隔一段迭代次数，打印当前迭代的时间和损失
-        if it%10 == 0:
+        if it % 10 == 0:
             print('%s iter = %04d, loss = %.4f' % (get_time(), it, grand_loss.item()))
     # 结束训练：完成训练后，结束 WandB 的记录
     wandb.finish()
@@ -486,7 +487,6 @@ if __name__ == '__main__':
     parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
     parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
 
-
     parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
     parser.add_argument('--max_experts', type=int, default=None, help='number of experts to read per file (leave as None unless doing ablations)')
 
@@ -495,5 +495,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     main(args)
-
-

@@ -18,20 +18,22 @@ import copy
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
 def main(args):
-    # 参数解析
+    # DSA 数据增强技术，目标是生成合成数据
     args.dsa = True if args.dsa == 'True' else False
     # 环境设置
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     args.dsa_param = ParamDiffAug()
 
-    ## 数据集加载
-    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args) # dst_train: 一个用于训练的数据集对象，class_map: 字典{原标签x:新的整数标签i}
-    
+    # # load (ZCA过的) dataset
+    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = \
+        get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)  # dst_train: 一个用于训练的数据集对象，class_map: 字典{原标签x:新的整数标签i}
+
     # print('\n================== Exp %d ==================\n '%exp)
     print('Hyper-parameters: \n', args.__dict__)
 
-    ## 设置保存模型参数trajectory的路径
+    # # 设置保存模型参数trajectory的路径
     save_dir = os.path.join(args.buffer_path, args.dataset)
     if args.dataset == "ImageNet":
         save_dir = os.path.join(save_dir, args.subset, str(args.res))
@@ -41,13 +43,13 @@ def main(args):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    ## 数据预处理：将图像数据和对应的标签进行整理和存储
+    # # 数据预处理：将图像数据和对应的标签进行整理和存储
     ''' organize the real dataset '''
     images_all = []
     labels_all = []
     indices_class = [[] for c in range(num_classes)]  # 存储每个类别的图像在 images_all 中的索引
     print("BUILDING DATASET")
-    
+
     # 整理训练集实例中每个样本，并分别添加到两个list中
     for i in tqdm(range(len(dst_train))):
         sample = dst_train[i]  # 当前样本：sample[0]是img; sample[1]是label
@@ -70,28 +72,29 @@ def main(args):
 
     # 计算并打印 real image 每个通道的均值和标准差
     for ch in range(channel):
-        print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+        print('real images channel %d, mean = %.4f, std = %.4f'%
+              (ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
 
-    ##　创建 loss function
+    # # 创建 loss function
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     trajectories = []  # 存储训练过程中模型的参数变化 to guide the distillation of our synthetic dataset
 
-    dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))  #　创建一个新的数据集，detach()返回的tensor和原始tensor共同一个内存，但是该tensor的requires_grad永远为false
+    dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))  # 创建一个新的数据集，detach()返回的tensor和原始tensor共同一个内存，但是该tensor的requires_grad永远为false
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)  # 数据加载器，将数据分成批次进行训练
 
-    ## 数据集扩充
+    # # 数据增强
     ''' set augmentation for whole-dataset training '''
     args.dc_aug_param = get_daparam(args.dataset, args.model, args.model, None)  # 数据增强参数
     args.dc_aug_param['strategy'] = 'crop_scale_rotate'  # 数据增强策略：裁剪，缩放，旋转
     print('DC augmentation parameters: \n', args.dc_aug_param)
 
-    ## 模型训练循环，每次迭代都会训练一个 D_syn的 teacher模型，保存对应trajectories
+    # # 模型训练循环，每次训练一个 D_syn 的 teacher模型，保存对应trajectories
     for it in range(0, args.num_experts):
         # 训练 distilled data D_syn
         ''' Train synthetic data '''
         teacher_net = get_network(args.model, channel, num_classes, im_size).to(args.device)  # get a random model
-        teacher_net.train()  # 设置为训练模式，从而启用模型的训练特性，如 Dropout等
+        teacher_net.train()  # 设置为训练模式，启用模型的训练特性，如 Dropout
         lr = args.lr_teacher
         teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)  # optimizer_img for synthetic data 创建一个随机梯度下降（SGD）优化器，用于更新模型参数
         teacher_optim.zero_grad()  # 梯度置零
@@ -100,21 +103,21 @@ def main(args):
         timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])  # 记录当前模型的参数，以便在训练过程中跟踪参数变化
 
         lr_schedule = [args.train_epochs // 2 + 1]  # 学习率调整的时间表，在训练的某些特定 epoch 时，将会减小学习率
-        
+
         # 模型训练的主要循环，调用utils.py的epoch函数
         for e in range(args.train_epochs):
 
-            train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim,
+            train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim, 
                                         criterion=criterion, args=args, aug=True)
 
             test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None,
                                         criterion=criterion, args=args, aug=False)
 
             print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
-            
+
             # record model parameters of each epoch
             timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
-            
+
             # 学习率衰减
             if e in lr_schedule and args.decay:  # args.decay=True 启用了学习率衰减
                 lr *= 0.1  # 减小到当前 lr 的1/10
@@ -138,7 +141,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
     parser.add_argument('--subset', type=str, default='imagenette', help='subset')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
-    parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
+    parser.add_argument('--num_experts', type=int, default=10, help='training iterations')
     parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters')
     parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--batch_real', type=int, default=256, help='batch size for real loader')
@@ -157,5 +160,3 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     main(args)
-
-
