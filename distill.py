@@ -37,8 +37,10 @@ def main(args):
     # DSA 的目标是生成合成数据
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # 用于评估 D_syn 性能的迭代次数(等差数列list)
+    
+    # 要评估 D_syn 性能的迭代次数(等差数列) [0, 100, 200, ..., 4900, 5000]
     eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
+    
     # load (ZCA过的) dataset
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)  # 获取用于评估的模型列表
@@ -194,9 +196,9 @@ def main(args):
     best_std = {m: 0 for m in model_eval_pool}
 
     # line 3: for each distillation step... do
-    # 主要的训练循环，Iteration即 distillation steps
+    # 模型训练循环，Iteration即 distillation steps
     for it in range(0, args.Iteration+1):
-        save_this_it = False
+        save_this_it = False  # 是否在当前步骤保存最佳合成数据
 
         # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
@@ -226,6 +228,7 @@ def main(args):
                     _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
+                
                 accs_test = np.array(accs_test)
                 accs_train = np.array(accs_train)
                 acc_test_mean = np.mean(accs_test)
@@ -240,34 +243,40 @@ def main(args):
                 wandb.log({'Std/{}'.format(model_eval): acc_test_std}, step=it)
                 wandb.log({'Max_Std/{}'.format(model_eval): best_std[model_eval]}, step=it)
 
-        # 保存合成图像和标签
+        # 在特定的迭代步骤(eval_it_pool中定义的步骤)保存和可视化合成数据，并将相关信息记录到W&B日志中
         if it in eval_it_pool and (save_this_it or it % 1000 == 0):
-            with torch.no_grad():
-                image_save = image_syn.cuda()
-
+            with torch.no_grad():  # 确保此代码块内 不会产生任何梯度计算
+                image_save = image_syn.cuda()  # 将合成的图像移到GPU上
+                # 保存图像和标签的目录路径
                 save_dir = os.path.join(".", "logged_files", args.dataset, wandb.run.name)
 
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
 
-                torch.save(image_save.cpu(), os.path.join(save_dir, "images_{}.pt".format(it)))
+                # 1.1 文件保存
+                torch.save(image_save.cpu(), os.path.join(save_dir, "images_{}.pt".format(it)))  # 保存为PyTorch张量，文件名包含当前迭代步骤 it
                 torch.save(label_syn.cpu(), os.path.join(save_dir, "labels_{}.pt".format(it)))
 
+                # 1.2 当前it 是一个保存最佳合成数据的步骤
                 if save_this_it:
                     torch.save(image_save.cpu(), os.path.join(save_dir, "images_best.pt".format(it)))
                     torch.save(label_syn.cpu(), os.path.join(save_dir, "labels_best.pt".format(it)))
 
-                wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)
+                # 2. 可视化
+                wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)  # 将合成图像的像素值分布 作为直方图记录到W&B日志中
 
+                # 每个类别的图像数<50，或设置为强制保存
                 if args.ipc < 50 or args.force_save:
-                    upsampled = image_save
+                    upsampled = image_save  # 之后进行裁剪/上采样
+                    # 图像尺寸调整，以便在W&B中显示较小的图像网格
                     if args.dataset != "ImageNet":
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
-                    grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                    wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
-                    wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
-
+                    grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)  # 将图像网格制作为torchvision图像，以便在W&B中显示
+                    wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)  # 将图像网格记录为W&B的图像类型，显示合成图像
+                    wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)  # 将合成图像的像素值分布记录到W&B日志中
+                    
+                    # 对合成图像进行剪裁，使得像素值在一定的标准差范围内
                     for clip_val in [2.5]:
                         std = torch.std(image_save)
                         mean = torch.mean(image_save)
@@ -278,7 +287,8 @@ def main(args):
                         grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
                         wandb.log({"Clipped_Synthetic_Images/std_{}".format(clip_val): wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
-                    if args.zca:
+                    # 经过ZCA白化的数据，进行类似的可视化和记录操作，分别记录重建的图像和像素值分布
+                    if args.zca: 
                         image_save = image_save.to(args.device)
                         image_save = args.zca_trans.inverse_transform(image_save)
                         image_save.cpu()
@@ -304,15 +314,15 @@ def main(args):
                             wandb.log({"Clipped_Reconstructed_Images/std_{}".format(clip_val): wandb.Image(
                                 torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
+        # 将合成数据的学习率记录到W&B日志中，用于追踪学习率的变化
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
         student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model
-
         student_net = ReparamModule(student_net)
 
         if args.distributed:
             student_net = torch.nn.DataParallel(student_net)
-
+        
         student_net.train()
 
         num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])
@@ -336,6 +346,7 @@ def main(args):
                 if args.max_experts is not None:
                     buffer = buffer[:args.max_experts]
                 random.shuffle(buffer)
+        
         # line 5: Choose random start epoch
         start_epoch = np.random.randint(0, args.max_start_epoch)
 
@@ -463,7 +474,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--pix_init', type=str, default='real', choices=["noise", "real"],
                         help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')
-
+    parser.add_argument('--res', type=int, default=128, help='resolution')
     parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'],
                         help='whether to use differentiable Siamese augmentation.')
     # DSA在训练迭代中对采样的真实批次和合成批次 中的所有数据点 应用相同的参数增强（例如旋转）

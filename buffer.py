@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 def main(args):
-    # DSA 数据增强技术，目标是生成合成数据
+    # 数据增强有两种情况：使用DSA和不使用DSA。DSA 数据增强技术，目标是生成合成数据，使得其在网络前向传播过程中能更好地近似真实数据的变化情况
     args.dsa = True if args.dsa == 'True' else False
     # 环境设置
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -43,22 +43,23 @@ def main(args):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    # # 数据预处理：将图像数据和对应的标签进行整理和存储
+    # # 1. 数据选择/数据预处理：将图像数据和对应的标签进行整理和存储
     ''' organize the real dataset '''
     images_all = []
     labels_all = []
     indices_class = [[] for c in range(num_classes)]  # 存储每个类别的图像在 images_all 中的索引
     print("BUILDING DATASET")
-
+    
     # 整理训练集实例中每个样本，并分别添加到两个list中
     for i in tqdm(range(len(dst_train))):
         sample = dst_train[i]  # 当前样本：sample[0]是img; sample[1]是label
-        images_all.append(torch.unsqueeze(sample[0], dim=0))  # img增加一个维度（第一维），再append
+        images_all.append(torch.unsqueeze(sample[0], dim=0))  # img增加一维（第一维），再append
         labels_all.append(class_map[torch.tensor(sample[1]).item()])  # 通过class_map将原始标签映射为新的标签，再append
 
     # 遍历整理后的新标签列表
     for i, lab in tqdm(enumerate(labels_all)):
-        indices_class[lab].append(i)  # 将当前索引i 添加到对应类别lab 的indices_class列表中
+        indices_class[lab].append(i)  # 将当前索引i 添加到对应类别lab 的indices_class列表中。[]
+    print('indices_class:', indices_class)
     # 合并为张量
     images_all = torch.cat(images_all, dim=0).to("cpu")  # 将所有图像数据堆叠起来，形成一个张量
     labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")  # list -> tensor
@@ -69,27 +70,28 @@ def main(args):
         # class c = 0：1200 real images
         # ...
         # class c = 9: 950 real images
-
     # 计算并打印 real image 每个通道的均值和标准差
     for ch in range(channel):
         print('real images channel %d, mean = %.4f, std = %.4f'%
               (ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
 
-    # # 创建 loss function
+    # # 创建 loss function 和 trajectories
     criterion = nn.CrossEntropyLoss().to(args.device)
-
     trajectories = []  # 存储训练过程中模型的参数变化 to guide the distillation of our synthetic dataset
 
-    dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))  # 创建一个新的数据集，detach()返回的tensor和原始tensor共同一个内存，但是该tensor的requires_grad永远为false
+    # # 生成整理后的 真实数据集实例 的独立副本
+    dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))  # 创建一个新的数据集实例，TensorDataset()两个参数分别是数据和标签。detach()创建一个不与计算图关联的tensor副本，避免在后续操作中对计算图产生影响。images_all.detach()是包含了所有真实图像的数据tensor，labels_all.detach()是包含了所有真实图像的标签tensor。copy.deepcopy()深拷贝，创建原始数据的完全独立副本，以确保在创建数据集对象时不会影响原始数据
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)  # 数据加载器，将数据分成批次进行训练
 
-    # # 数据增强
+    # # 2. 数据增强，生成合成数据
+    # 通过args参数传到 utils.epoch()中实现
     ''' set augmentation for whole-dataset training '''
     args.dc_aug_param = get_daparam(args.dataset, args.model, args.model, None)  # 数据增强参数
     args.dc_aug_param['strategy'] = 'crop_scale_rotate'  # 数据增强策略：裁剪，缩放，旋转
     print('DC augmentation parameters: \n', args.dc_aug_param)
 
-    # # 模型训练循环，每次训练一个 D_syn 的 teacher模型，保存对应trajectories
+    # # 3. 模型训练循环，每次训练一个 D_syn 的 teacher模型，保存对应trajectories。and
+    # # 4. 参数更新
     for it in range(0, args.num_experts):
         # 训练 distilled data D_syn
         ''' Train synthetic data '''

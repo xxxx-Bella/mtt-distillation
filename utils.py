@@ -14,6 +14,7 @@ from torchvision import datasets, transforms
 from scipy.ndimage.interpolation import rotate as scipyrotate
 from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP
 
+# for dataset == 'ImageNet'
 class Config:
     imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
@@ -87,7 +88,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         num_classes = 10
 
         # 类别标签list
-        config.img_net_classes = config.dict[subset]  # dict[subset]=imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
+        config.img_net_classes = config.dict[subset]  # =imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
@@ -305,12 +306,13 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         net.train()
     else:
         net.eval()
-
+    
     for i_batch, datum in enumerate(dataloader):
+        # 初始化
         img = datum[0].float().to(args.device)
         lab = datum[1].long().to(args.device)
 
-        # texture 纹理增强操作
+        # texture 纹理增强
         if mode == "train" and texture:
             img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), 
                                                           torch.randint(args.im_size[0]*args.canvas_size, (1,))), 
@@ -318,7 +320,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
                              for _ in range(args.canvas_samples)])
             lab = torch.cat([lab for _ in range(args.canvas_samples)])
 
-        # 数据增强操作
+        # augment 数据增强
         if aug:
             if args.dsa:
                 img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
@@ -331,7 +333,8 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 
         n_b = lab.shape[0]  # 批次中样本的数量
 
-        output = net(img)  # 使用神经网络模型进行前向传播
+        # 使用神经网络模型进行前向传播
+        output = net(img)
         loss = criterion(output, lab)
         acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
 
@@ -390,7 +393,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         return net, acc_train_list, acc_test
 
 
-# 数据增强
+# 不使用DSA 的数据增强
 def augment(images, dc_aug_param, device):
     # This can be sped up in the future.
 
@@ -500,7 +503,7 @@ def get_eval_pool(eval_mode, model, model_eval):
 
 class ParamDiffAug():
     def __init__(self):
-        self.aug_mode = 'S'  #'multiple or single'
+        self.aug_mode = 'S'  # 'multiple or single'
         self.prob_flip = 0.5
         self.ratio_scale = 1.2
         self.ratio_rotate = 15.0
@@ -519,7 +522,7 @@ def set_seed_DiffAug(param):
         torch.random.manual_seed(param.latestseed)
         param.latestseed += 1
 
-
+# 使用DSA 的数据增强的具体实现：根据strategy调用对应的rand_xx()函数
 def DiffAugment(x, strategy='', seed = -1, param = None):
     if seed == -1:
         param.batchmode = False
@@ -534,7 +537,7 @@ def DiffAugment(x, strategy='', seed = -1, param = None):
     if strategy:
         if param.aug_mode == 'M':  # original
             for p in strategy.split('_'):
-                for f in AUGMENT_FNS[p]:
+                for f in AUGMENT_FNS[p]:  # eg. 'crop': [rand_crop], 若p='crop', 则f=rand_crop()
                     x = f(x, param)
         elif param.aug_mode == 'S':
             pbties = strategy.split('_')
@@ -621,7 +624,7 @@ def rand_contrast(x, param):
     x = (x - x_mean) * (randc + ratio) + x_mean
     return x
 
-
+# 'crop'
 def rand_crop(x, param):
     # The image is padded on its surrounding and then cropped.
     ratio = param.ratio_crop_pad
