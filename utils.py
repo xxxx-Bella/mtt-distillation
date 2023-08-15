@@ -46,27 +46,35 @@ config = Config()
 
 
 # load dataset and operate ZCA whitening
+# 加载和预处理数据，以供模型训练和评估使用
 def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
 
-    class_map = None
-    loader_train_dict = None
-    class_map_inv = None
+    class_map = None  # 类别映射
+    loader_train_dict = None  # 训练数据加载器
+    class_map_inv = None  # 类别映射的逆映射
 
+    # 根据数据集名称，选择合适的数据集预处理逻辑
     if dataset == 'CIFAR10':
         channel = 3
         im_size = (32, 32)
         num_classes = 10
         mean = [0.4914, 0.4822, 0.4465]
         std = [0.2023, 0.1994, 0.2010]
+        
+        # 创建数据转换操作
         if args.zca:
             transform = transforms.Compose([transforms.ToTensor()])
         else:
             transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
+        
+        # 创建训练集和测试集的数据加载器
         dst_train = datasets.CIFAR10(data_path, train=True, download=True, transform=transform) # no augmentation
-        dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
-        class_names = dst_train.classes
-        class_map = {x: x for x in range(num_classes)}  # 一个字典，用于将原始类别标签x 映射 为新的类别标签x
-
+        dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform) # not used in buffer.py or distill.py
+        
+        class_names = dst_train.classes  # str
+        class_map = {x: x for x in range(num_classes)}  # 一个字典，用于将原始类别的标识符 映射为其在数据集中的位置。此处 类别的标识符与其在数据集中的位置一致
+    
+    # 类似 CIFAR10, 不同的im_size 和路径
     elif dataset == 'Tiny':
         channel = 3
         im_size = (64, 64)
@@ -77,21 +85,25 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
             transform = transforms.Compose([transforms.ToTensor()])
         else:
             transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
-        dst_train = datasets.ImageFolder(os.path.join(data_path, "train"), transform=transform) # no augmentation
+        #　ImageFolder假设所有文件按文件夹保存，每个文件夹存储同一类别的图片，文件夹名为类名
+        dst_train = datasets.ImageFolder(os.path.join(data_path, "train"), transform=transform) # no augmentation, 第一个参数是root，在root指定路径下寻找img
         dst_test = datasets.ImageFolder(os.path.join(data_path, "val", "images"), transform=transform)
         class_names = dst_train.classes
         class_map = {x: x for x in range(num_classes)}
 
+    # ImageNet 要 resize和 centerCrop
     elif dataset == 'ImageNet':
         channel = 3
         im_size = (128, 128)
         num_classes = 10
 
         # 类别标签list
-        config.img_net_classes = config.dict[subset]  # =imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
+        config.img_net_classes = config.dict[subset]  # imagenette=[0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
+
+        # 创建数据转换操作
         if args.zca:
             transform = transforms.Compose([transforms.ToTensor(),
                                         transforms.Resize(im_size),
@@ -101,19 +113,21 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
                                             transforms.Normalize(mean=mean, std=std),
                                             transforms.Resize(im_size),
                                             transforms.CenterCrop(im_size)])
-
+        # 创建训练集和测试集的数据加载器
         dst_train = datasets.ImageNet(data_path, split="train", transform=transform) # no augmentation
         dst_train_dict = {c: torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.equal(dst_train.targets, config.img_net_classes[c])))) 
-                          for c in range(len(config.img_net_classes))}
-        dst_train = torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.isin(dst_train.targets, config.img_net_classes))))
+                          for c in range(len(config.img_net_classes))}  # 类别 c=0~9, 对应的值是该类别的训练数据集的子集。.Subset()从完整的训练数据集中提取出属于该类别的样本，并将其存储在一个子集中
+        dst_train = torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.isin(dst_train.targets, config.img_net_classes))))  # 从完整的训练数据集中创建一个子集，但这次是根据所有类别的索引组合而成，而不是分别按类别。.isin()判断每个样本的类别是否在给定类别列表中
         loader_train_dict = {c: torch.utils.data.DataLoader(dst_train_dict[c], batch_size=batch_size, shuffle=True, num_workers=16) 
-                             for c in range(len(config.img_net_classes))}
+                             for c in range(len(config.img_net_classes))}  # 每个类别c 对应的值是该类别的训练数据加载器
+        
         dst_test = datasets.ImageNet(data_path, split="val", transform=transform)
         dst_test = torch.utils.data.Subset(dst_test, np.squeeze(np.argwhere(np.isin(dst_test.targets, config.img_net_classes))))
         for c in range(len(config.img_net_classes)):
             dst_test.dataset.targets[dst_test.dataset.targets == config.img_net_classes[c]] = c
             dst_train.dataset.targets[dst_train.dataset.targets == config.img_net_classes[c]] = c
-        print(dst_test.dataset)
+        print('dst_test.dataset:', dst_test.dataset)
+        
         class_map = {x: i for i, x in enumerate(config.img_net_classes)}
         class_map_inv = {i: x for i, x in enumerate(config.img_net_classes)}
         class_names = None
@@ -136,7 +150,8 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
 
     else:
         exit('unknown dataset: %s' % dataset)
-
+    
+    # ZCA 白化操作：一种数据预处理方法，用于降低数据的冗余性，使得数据更具有统计性质
     if args.zca:
         images = []
         labels = []
@@ -298,6 +313,8 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     loss_avg, acc_avg, num_exp = 0, 0, 0  # num_exp 样本数量
     net = net.to(args.device)
 
+    # 其他 dataset: 类别的标识符与其在数据集中的位置一致: 
+    # class_map = {x: x for x in range(num_classes)}
     if args.dataset == "ImageNet":
         class_map = {x: i for i, x in enumerate(config.img_net_classes)}  # enumerate遍历标签列表，i标签索引，x标签。将原始类别标签x映射为新的整数标签i
 
@@ -309,7 +326,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     
     for i_batch, datum in enumerate(dataloader):
         # 初始化
-        img = datum[0].float().to(args.device)
+        img = datum[0].float().to(args.device)  # tensor
         lab = datum[1].long().to(args.device)
 
         # texture 纹理增强
@@ -324,7 +341,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         if aug:
             if args.dsa:
                 img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
-            else:
+            else:  # no DSA-augmentation
                 img = augment(img, args.dc_aug_param, device=args.device)
 
         # eval模式，将标签进行映射
@@ -336,7 +353,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         # 使用神经网络模型进行前向传播
         output = net(img)
         loss = criterion(output, lab)
-        acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
+        acc = np.sum(np.equal( np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy() ))
 
         loss_avg += loss.item()*n_b
         acc_avg += acc
@@ -348,41 +365,47 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
             loss.backward()
             optimizer.step()
 
-    loss_avg /= num_exp
+    loss_avg /= num_exp  # each teacher_net
     acc_avg /= num_exp
 
     return loss_avg, acc_avg
 
-
+# 评估模型在 合成数据集 上的性能
 def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False):
-    net = net.to(args.device)
+    net = net.to(args.device)  # 待评估的模型
     images_train = images_train.to(args.device)
     labels_train = labels_train.to(args.device)
     lr = float(args.lr_net)
-    Epoch = int(args.epoch_eval_train)
-    lr_schedule = [Epoch//2+1]
+    Epoch = int(args.epoch_eval_train)  # epochs to train a model with synthetic data
+    lr_schedule = [Epoch//2+1]  # 在训练迭代的一半处降低学习率
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     dst_train = TensorDataset(images_train, labels_train)
-    trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
+    trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)  # 训练数据加载器
 
     start = time.time()
     acc_train_list = []
     loss_train_list = []
 
-    for ep in tqdm.tqdm(range(Epoch+1)):
+    for ep in tqdm.tqdm(range(Epoch+1)):  # ep = 0~Epoch
+        # epoch() 执行训练
         loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True, texture=texture)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
+        
+        # 最后一次迭代，测试
         if ep == Epoch:
             with torch.no_grad():
+                # epoch() 执行测试，计算测试准确率
                 loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug=False)
+        # 调整学习率
         if ep in lr_schedule:
             lr *= 0.1
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
-
+    
+    # 评估过程的训练时间
     time_train = time.time() - start
 
     print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
@@ -500,19 +523,19 @@ def get_eval_pool(eval_mode, model, model_eval):
         model_eval_pool = [model_eval]
     return model_eval_pool
 
-
+# 配置DSA数据增强的方式
 class ParamDiffAug():
     def __init__(self):
-        self.aug_mode = 'S'  # 'multiple or single'
-        self.prob_flip = 0.5
-        self.ratio_scale = 1.2
-        self.ratio_rotate = 15.0
-        self.ratio_crop_pad = 0.125
+        self.aug_mode = 'S'  # 'multiple or single' 数据增强模式
+        self.prob_flip = 0.5  # 翻转的概率
+        self.ratio_scale = 1.2  # 尺度变换的比例
+        self.ratio_rotate = 15.0  # 旋转的角度
+        self.ratio_crop_pad = 0.125  # 裁剪和填充的比例
         self.ratio_cutout = 0.5  # the size would be 0.5x0.5
-        self.ratio_noise = 0.05
-        self.brightness = 1.0
-        self.saturation = 2.0
-        self.contrast = 0.5
+        self.ratio_noise = 0.05  # 噪声的比例
+        self.brightness = 1.0  # 亮度增强的系数
+        self.saturation = 2.0  # 饱和度增强的系数
+        self.contrast = 0.5  # 对比度增强的系数
 
 
 def set_seed_DiffAug(param):

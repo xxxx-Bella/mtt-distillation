@@ -47,18 +47,21 @@ def main(args):
     ''' organize the real dataset '''
     images_all = []
     labels_all = []
-    indices_class = [[] for c in range(num_classes)]  # 存储每个类别的图像在 images_all 中的索引
-    print("BUILDING DATASET")
-    
-    # 整理训练集实例中每个样本，并分别添加到两个list中
+    # 索引list，每个子列表长度为 num_classes，其中存储属于相应类别的图像在 images_all 和 labels_all 中的索引
+    indices_class = [[] for c in range(num_classes)] 
+
+    print("BUILDING DATASET")  # 构建数据集
+    # 遍历训练集实例中每个样本，并分别添加到两个list中
     for i in tqdm(range(len(dst_train))):
         sample = dst_train[i]  # 当前样本：sample[0]是img; sample[1]是label
-        images_all.append(torch.unsqueeze(sample[0], dim=0))  # img增加一维（第一维），再append
-        labels_all.append(class_map[torch.tensor(sample[1]).item()])  # 通过class_map将原始标签映射为新的标签，再append
+        print('i={} \nsample[0]: {}, sample[1]: {}'.format(i, sample[0], sample[1]))
 
-    # 遍历整理后的新标签列表
+        images_all.append(torch.unsqueeze(sample[0], dim=0))  # img增加一维（第0维）为了将每个图像变成一个单独的图像张量，再append
+        labels_all.append(class_map[torch.tensor(sample[1]).item()])  # .item()将标签张量中的单个值提取出来，作为标量值。再通过class_map将该样本类别 映射为新的数字标签，再append。
+
+    # 添加图像索引到相应类别子列表中
     for i, lab in tqdm(enumerate(labels_all)):
-        indices_class[lab].append(i)  # 将当前索引i 添加到对应类别lab 的indices_class列表中。[]
+        indices_class[lab].append(i)  # 将当前索引i 添加到对应类别lab 的子列表中。[]
     print('indices_class:', indices_class)
     # 合并为张量
     images_all = torch.cat(images_all, dim=0).to("cpu")  # 将所有图像数据堆叠起来，形成一个张量
@@ -90,7 +93,7 @@ def main(args):
     args.dc_aug_param['strategy'] = 'crop_scale_rotate'  # 数据增强策略：裁剪，缩放，旋转
     print('DC augmentation parameters: \n', args.dc_aug_param)
 
-    # # 3. 模型训练循环，每次训练一个 D_syn 的 teacher模型，保存对应trajectories。and
+    # # 3. 模型训练循环，每次训练一个 D_syn 的 teacher模型，保存对应trajectories, and
     # # 4. 参数更新
     for it in range(0, args.num_experts):
         # 训练 distilled data D_syn

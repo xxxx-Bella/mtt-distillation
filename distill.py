@@ -28,80 +28,95 @@ def main(args):
         print("WARNING: Using texture with real initialization will take a very long time to smooth out the boundaries between images.")
 
     if args.max_experts is not None and args.max_files is not None:
-        args.total_experts = args.max_experts * args.max_files
+        args.total_experts = args.max_experts * args.max_files  # max_experts: per file
 
     print("CUDNN STATUS: {}".format(torch.backends.cudnn.enabled))
 
     # # 初始化配置
     # Input: A: Differentiable augmentation function
-    # DSA 的目标是生成合成数据
+    # DSA 的目标是生成合成数据 D_syns
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # 要评估 D_syn 性能的迭代次数(等差数列) [0, 100, 200, ..., 4900, 5000]
+    # 评估 D_syn 性能的迭代次数(等差数列) [0, 100, 200, ..., 4900, 5000]
     eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
     
+    # # Reset args
+
     # load (ZCA过的) dataset
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
-    model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)  # 获取用于评估的模型列表
-
-    im_res = im_size[0]
-
-    args.im_size = im_size
-
-    accs_all_exps = dict() # record performances of all experiments
+    # 获取用于评估的 model list
+    model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
+    # record performances of all experiments (not used)
+    accs_all_exps = dict()
     for key in model_eval_pool:
         accs_all_exps[key] = []
-
     data_save = []
 
+    im_res = im_size[0]
+    args.im_size = im_size
+
+    # DSA augmentation
     if args.dsa:
         # args.epoch_eval_train = 1000
         args.dc_aug_param = None
+    args.dsa_param = ParamDiffAug()  # 创建 ParamDiffAug 类对象，用于控制DSA数据增强方式
+    dsa_params = args.dsa_param  # 暂存，后面重新赋值给args对象的属性
 
-    args.dsa_param = ParamDiffAug()
-
-    dsa_params = args.dsa_param
+    # ZCA whitening
     if args.zca:
-        zca_trans = args.zca_trans
+        zca_trans = args.zca_trans  # 暂存，后面重新赋值给args对象的属性
     else:
         zca_trans = None
-
-    wandb.init(sync_tensorboard=False,
+    
+    # initialize wandb log
+    wandb.init(sync_tensorboard=False,  # 不与 TensorBoard 同步
                project="DatasetDistillation",
-               job_type="CleanRepo",
+               job_type="CleanRepo",  # 工作类型
                config=args,
                )
-
+    
+    # 重新定义 args 对象为空的匿名类，为了重置 args 对象的内容，以便后续的参数赋值
     args = type('', (), {})()
-
+    # 将从 W&B 配置中读取的参数 重新赋值给 args 对象
     for key in wandb.config._items:
         setattr(args, key, wandb.config._items[key])
 
+    # 将之前创建的对象 赋值给args对象的属性，以便后续用于 DSA 和 ZCA白化
     args.dsa_param = dsa_params
     args.zca_trans = zca_trans
 
-    if args.batch_syn is None:
-        args.batch_syn = num_classes * args.ipc
-
+    if args.batch_syn is None:  # batch_syn: 合成图像的批次大小，内存不足时使用
+        args.batch_syn = num_classes * args.ipc  # ipc: 每个类别的图像数量 img_num/class
+    
+    # 判断当前计算机是否有多个GPU，若为TRUE则启用分布式训练
     args.distributed = torch.cuda.device_count() > 1
 
-
-    print('Hyper-parameters: \n', args.__dict__)
+    # print('Hyper-parameters: \n', args.__dict__) or: 
+    # 分行打印 所有超参数
+    print("Hyper-parameters:")
+    for key, value in args.__dict__.items():
+        print(f"{key}: {value}")
     print('Evaluation model pool: ', model_eval_pool)
 
+
     ''' organize the real dataset '''
-    images_all = []
-    labels_all = []
+    images_all = []  # 存储所有真实图像
+    labels_all = []  # 和对应的标签
+    # 索引list，每个子列表长度为 num_classes，其中存储属于相应类别的图像在 images_all 和 labels_all 中的索引
     indices_class = [[] for c in range(num_classes)]
+
+    # --- --- 以下code直到 'for ch in range(channel)' 同 buffer.py
     print("BUILDING DATASET")
+    # 遍历 dst_train 数据集中每个样本
     for i in tqdm(range(len(dst_train))):
         sample = dst_train[i]
-        images_all.append(torch.unsqueeze(sample[0], dim=0))
+        images_all.append(torch.unsqueeze(sample[0], dim=0))  # img: (C, H, W) --> (1, C, H, W) 
         labels_all.append(class_map[torch.tensor(sample[1]).item()])
-
+    # 添加图像索引到相应类别子列表中
     for i, lab in tqdm(enumerate(labels_all)):
         indices_class[lab].append(i)
+    
     images_all = torch.cat(images_all, dim=0).to("cpu")
     labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")
 
@@ -110,33 +125,45 @@ def main(args):
 
     for ch in range(channel):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+    # --- ---
 
-    def get_images(c, n):  # get random n images from class c
+    def get_images(c, n):  # get random n images from class c (for initialize D_syn from random real images)
         idx_shuffle = np.random.permutation(indices_class[c])[:n]
         return images_all[idx_shuffle]
 
-    # line 1: Initialize distilled data D_syn ~ D_real. (D_syn: label_syn, image_syn, syn_lr)
+    # # line 1: Initialize distilled data D_syn ~ D_real. (D_syn: label_syn, image_syn, syn_lr)
+    # 将合成数据 D_syn 初始化为与真实数据 D_real 类似的分布
     ''' initialize the synthetic data '''
-    label_syn = torch.tensor([np.ones(args.ipc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
-
+    
+    # label_syn 初始化
+    # [...]为每个类别生成一个长度为 args.ipc 的二维数组; view(-1)将tensor 展平为一维数组，以便与合成图像的数量相匹配
+    # i.e. ipc=3, num_classes=10: label_syn=[0,0,0, 1,1,1, ..., 9,9,9], shape=(num_classes*ipc, )
+    label_syn = torch.tensor([np.ones(args.ipc, dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1)
+    
+    # image_syn 初始化（每个类别的合成图像，im_size[0]和[1]是图片高度宽度）
     if args.texture:
-        image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0]*args.canvas_size, im_size[1]*args.canvas_size), dtype=torch.float)
+        image_syn = torch.randn(size=(num_classes*args.ipc, channel, im_size[0]*args.canvas_size, im_size[1]*args.canvas_size), dtype=torch.float)
     else:
-        image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
-
+        image_syn = torch.randn(size=(num_classes*args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
+    
+    # syn_lr 初始化
     syn_lr = torch.tensor(args.lr_teacher).to(args.device)
 
+    # 是否从真实图像初始化 D_syn
     if args.pix_init == 'real':
         print('initialize synthetic data from random real images')
         if args.texture:
+            # 遍历每个类别和合成图像的位置
             for c in range(num_classes):
                 for i in range(args.canvas_size):
                     for j in range(args.canvas_size):
-                        image_syn.data[c * args.ipc:(c + 1) * args.ipc, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat(
+                        # 用随机选取的真实图像的一部分来填充
+                        image_syn.data[c*args.ipc:(c+1)*args.ipc, :, i*im_size[0]:(i+1)*im_size[0], j*im_size[1]:(j+1)*im_size[1]] = torch.cat(
                             [get_images(c, 1).detach().data for s in range(args.ipc)])
+        # no texture: 直接将 args.ipc 个真实图像复制到每个类别的合成图像位置上
         for c in range(num_classes):
             image_syn.data[c * args.ipc:(c + 1) * args.ipc] = get_images(c, args.ipc).detach().data
-    else:  # 'noise'
+    else:  # 'noise' 合成图像的每个像素都将是随机生成的值
         print('initialize synthetic data from random noise')
 
     ''' training '''
@@ -145,9 +172,9 @@ def main(args):
     syn_lr = syn_lr.detach().to(args.device).requires_grad_(True)
 
     # 创建优化器
-    optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)
-    optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)
-    optimizer_img.zero_grad()
+    optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)  # 用于更新 image_syn
+    optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)  # 用于更新 syn_lr
+    optimizer_img.zero_grad()  # 梯度清零，以便在每次迭代开始时重新计算梯度
     # 定义损失函数
     criterion = nn.CrossEntropyLoss().to(args.device)
     print('%s training begins' % get_time())
@@ -170,7 +197,6 @@ def main(args):
             n += 1
         if n == 0:
             raise AssertionError("No buffers detected at {}".format(expert_dir))
-
     else:  # 加载多个缓冲区文件中的数据到 buffer 中，并根据 max_files 和 max_experts 参数进行处理
         expert_files = []
         n = 0
@@ -188,7 +214,7 @@ def main(args):
             expert_files = expert_files[:args.max_files]
         print("loading file {}".format(expert_files[file_idx]))
         buffer = torch.load(expert_files[file_idx])
-        if args.max_experts is not None:
+        if args.max_experts is not None:  # per file
             buffer = buffer[:args.max_experts]
         random.shuffle(buffer)
 
@@ -203,11 +229,14 @@ def main(args):
         # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
 
-        # 对 D_syn 进行评估
+        # 对 D_syn 进行评估，记录评估结果到 W&B 日志
         ''' Evaluate synthetic data '''
         if it in eval_it_pool:
+            # 遍历每个评估模型
             for model_eval in model_eval_pool:
+                # 打印训练模型名称、当前评估模型名称、当前迭代数
                 print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
+                # 打印数据增强信息
                 if args.dsa:
                     print('DSA augmentation strategy: \n', args.dsa_strategy)
                     print('DSA augmentation parameters: \n', args.dsa_param.__dict__)
@@ -216,27 +245,37 @@ def main(args):
 
                 accs_test = []
                 accs_train = []
-                for it_eval in range(args.num_eval):
-                    net_eval = get_network(model_eval, channel, num_classes, im_size).to(args.device) # get a random model
-
+                
+                # 多次对合成数据进行评估
+                for it_eval in range(args.num_eval): # num_eval 在多少个网络上进行评估
+                    # get a random model
+                    net_eval = get_network(model_eval, channel, num_classes, im_size).to(args.device)
+                    
+                    # 评估用的标签和图像数据
                     eval_labs = label_syn
                     with torch.no_grad():
                         image_save = image_syn
+                    
+                    # 创建用于评估的图像和标签副本：确保在评估过程中不会对原始数据造成任何影响
                     image_syn_eval, label_syn_eval = copy.deepcopy(image_save.detach()), copy.deepcopy(eval_labs.detach()) # avoid any unaware modification
 
-                    args.lr_net = syn_lr.item()
+                    args.lr_net = syn_lr.item()  # 评估时的学习率
                     _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
                 
+                # 计算评估结果的平均值和标准差
                 accs_test = np.array(accs_test)
                 accs_train = np.array(accs_train)
                 acc_test_mean = np.mean(accs_test)
                 acc_test_std = np.std(accs_test)
+
+                # 判断是否要保存当前结果
                 if acc_test_mean > best_acc[model_eval]:
                     best_acc[model_eval] = acc_test_mean
                     best_std[model_eval] = acc_test_std
                     save_this_it = True
+                # 打印评估结果信息，记录到 W&B 日志
                 print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs_test), model_eval, acc_test_mean, acc_test_std))
                 wandb.log({'Accuracy/{}'.format(model_eval): acc_test_mean}, step=it)
                 wandb.log({'Max_Accuracy/{}'.format(model_eval): best_acc[model_eval]}, step=it)
@@ -263,7 +302,7 @@ def main(args):
                     torch.save(label_syn.cpu(), os.path.join(save_dir, "labels_best.pt".format(it)))
 
                 # 2. 可视化
-                wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)  # 将合成图像的像素值分布 作为直方图记录到W&B日志中
+                wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)  # 将合成图像的像素值分布 作为直方图 记录到W&B日志中
 
                 # 每个类别的图像数<50，或设置为强制保存
                 if args.ipc < 50 or args.force_save:
@@ -317,17 +356,18 @@ def main(args):
         # 将合成数据的学习率记录到W&B日志中，用于追踪学习率的变化
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
-        student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model
-        student_net = ReparamModule(student_net)
+        # 构建和配置 student_net
+        student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model. dist表示分布式训练
+        student_net = ReparamModule(student_net)  # 将其包装在ReparamModule模块中，为了支持参数的重参数化
 
-        if args.distributed:
+        if args.distributed:  # 用 DataParallel 对象将模型包装起来，这允许在多个GPU上并行训练
             student_net = torch.nn.DataParallel(student_net)
         
-        student_net.train()
+        student_net.train()  # 设置为训练模式，从而启用一些训练功能，如 Dropout 和批量归一化的更新
 
-        num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])
+        num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])  # 计算模型的总参数数量
 
-        # line 4: Sample expert trajectory τ* ~ {τ*_i} with τ*={θ*_i}(0->T)
+        # # line 4: Sample expert trajectory τ* ~ {τ*_i} with τ*={θ*_i}(0->T)
         if args.load_all:
             expert_trajectory = buffer[np.random.randint(0, len(buffer))]
         else:
@@ -347,90 +387,101 @@ def main(args):
                     buffer = buffer[:args.max_experts]
                 random.shuffle(buffer)
         
-        # line 5: Choose random start epoch
+        # # line 5: Choose random start epoch
         start_epoch = np.random.randint(0, args.max_start_epoch)
 
-        # line 6, 7: Initialize student network with expert params
+        # # line 6, 7: Initialize student network with expert params
+        # 获取 expert_trajectory 在 start_epoch 时刻的模型参数
         starting_params = expert_trajectory[start_epoch]
 
-        target_params = expert_trajectory[start_epoch+args.expert_epochs]  # expert params
-        target_params = torch.cat([p.data.to(args.device).reshape(-1) for p in target_params], 0)
-
+        target_params = expert_trajectory[start_epoch+args.expert_epochs]  # 作为 student_net 优化的目标参数 (expert params)
+        target_params = torch.cat([p.data.to(args.device).reshape(-1) for p in target_params], 0)  # 将这些参数cat成一个一维张量
+        
+        # 创建一个包含学生模型参数的list: 将 starting_params 中每个参数张量拉平成一维，并cat成一个一维张量。并设置该tensor需要计算梯度，for后续优化中更新参数
         student_params = [torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0).requires_grad_(True)]
-
+        
+        # 同上，将 starting_params 中的每个参数张量拉平成一维，并cat成一个一维张量（在初始化student_params之后进行，以备后续使用）
         starting_params = torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0)
 
+        # as training input
         syn_images = image_syn
-
         y_hat = label_syn.to(args.device)
 
+        # 用于记录参数损失和距离
         param_loss_list = []
         param_dist_list = []
-        indices_chunks = []
+        indices_chunks = []  # 用于存储索引块：每次循环，从中获取部分索引，处理批量数据
 
-        # line 8: for n = 0 → N − 1 do
+        # # line 8: for n = 0 → N − 1 do
+        # 在合成数据上训练更新 student_params，使其逼近 target_params
         for step in range(args.syn_steps):
             # line 9, 10: Sample a mini-batch of distilled images
-            if not indices_chunks:
-                indices = torch.randperm(len(syn_images))
-                indices_chunks = list(torch.split(indices, args.batch_syn))
-
+            if not indices_chunks:  # 重新生成索引块(重新采样一批数据用于训练)
+                indices = torch.randperm(len(syn_images))  # 采样的图像索引：0, 6, ..., 500, ..., 375 --> []?
+                indices_chunks = list(torch.split(indices, args.batch_syn))  # 将indices切割为批次大小，生成一个索引块列表。每个索引块包含一批图像的索引
+                print('indices: {}, \nindices_chunks: {}'.format(indices, indices_chunks))
             these_indices = indices_chunks.pop()
-
-            x = syn_images[these_indices]
+            # 本次训练的数据样本
+            x = syn_images[these_indices]  # 多张img
             this_y = y_hat[these_indices]
 
-            if args.texture:
+            if args.texture:  # 纹理增强
+                # img 随机平移，增加数据多样性。roll()沿给定维数(1, 2)滚动张量
                 x = torch.cat([torch.stack([torch.roll(im, (torch.randint(im_size[0]*args.canvas_size, (1,)), 
-                                                            torch.randint(im_size[1]*args.canvas_size, (1,))), 
-                                                       (1, 2))[:, :im_size[0], :im_size[1]] for im in x])
-                               for _ in range(args.canvas_samples)])
+                                                            torch.randint(im_size[1]*args.canvas_size, (1,))),  # 生成两个随机整数，分别用于高度和宽度上的平移（im_size[0]和[1]是图像高度和宽度）
+                                                       (1, 2))[:, :im_size[0], :im_size[1]] for im in x])  # 从滚动后的图像中截取指定的区域，确保输入输出尺寸一致
+                               for _ in range(args.canvas_samples)])  # stack()将得到的多张img叠加，生成一个新的图像列表。cat()将平移后的img列表与原始图像 x 垂直拼接
+                # label 进行相同次数的重复
                 this_y = torch.cat([this_y for _ in range(args.canvas_samples)])
 
-            if args.dsa and (not args.no_aug):
+            if args.dsa and (not args.no_aug):  # DSA数据增强
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param)
-            # line 11, 12, 13: Update student network w.r.t. classification loss
-            if args.distributed:
+            
+            # # line 11, 12: Update student network w.r.t. classification loss
+            if args.distributed:  # 若有多个GPU则启用分布式训练，将最新的student_params复制为多个副本
                 forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)
             else:
                 forward_params = student_params[-1]
-
+            # 输入 x 进行前向传播，得到输出 x
             x = student_net(x, flat_param=forward_params)
+            # 计算交叉熵损失
             ce_loss = criterion(x, this_y)
-
+            # 计算交叉熵损失对student_params的梯度
             grad = torch.autograd.grad(ce_loss, student_params[-1], create_graph=True)[0]
-
+            # 更新student_params (减去 梯度与学习率的乘积)，逼近目标参数
             student_params.append(student_params[-1] - syn_lr * grad)
 
-        # line 14, 15: computing loss between ending student and expert params
+        # # line 14, 15: computing loss between ending student and expert params
+        # 初始化为零
         param_loss = torch.tensor(0.0).to(args.device)
         param_dist = torch.tensor(0.0).to(args.device)
-
-        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")  # ending student, expert params
-        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")  # 
+        # 计算均方误差损失 ending student & expert params
+        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")  # ||θ(k+N) - θ(k+M)_T||
+        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")     # ||θ(k)_T - θ(k+M)_T||
 
         param_loss_list.append(param_loss)
         param_dist_list.append(param_dist)
-
+        # 平均 loss 和 distance。num_params 模型总参数数量
         param_loss /= num_params
         param_dist /= num_params
-
+        # 归一化的 loss
         param_loss /= param_dist
-
+        # 最终的 loss of trajectory matching
         grand_loss = param_loss
 
         # line 16: Update D_syn and α w.r.t loss
+        # 优化器更新，梯度清零
         optimizer_img.zero_grad()
         optimizer_lr.zero_grad()
-
+        # 反向传播计算梯度
         grand_loss.backward()
-
+        # 用优化器对模型参数（img_syn, syn_lr）进行更新
         optimizer_img.step()
         optimizer_lr.step()
-
+        # 记录到 W&B 日志
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),
                    "Start_Epoch": start_epoch})
-
+        # 释放之前用于计算梯度的 student_params
         for _ in student_params:
             del _
 
@@ -469,7 +520,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_init', type=float, default=0.01, help='how to init lr (alpha)')
 
     parser.add_argument('--batch_real', type=int, default=256, help='batch size for real data')
-    parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')
+    parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')  # 内存不足时使用
     parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
 
     parser.add_argument('--pix_init', type=str, default='real', choices=["noise", "real"],
