@@ -155,14 +155,14 @@ def main(args):
         if args.texture:
             # 遍历每个类别和合成图像的位置
             for c in range(num_classes):
-                for i in range(args.canvas_size):
-                    for j in range(args.canvas_size):
+                for i in range(args.canvas_size):  #　合成图像的行索引
+                    for j in range(args.canvas_size):  # 合成图像的列索引
                         # 用随机选取的真实图像的一部分来填充
                         image_syn.data[c*args.ipc:(c+1)*args.ipc, :, i*im_size[0]:(i+1)*im_size[0], j*im_size[1]:(j+1)*im_size[1]] = torch.cat(
-                            [get_images(c, 1).detach().data for s in range(args.ipc)])
+                            [get_images(c, 1).detach().data for s in range(args.ipc)])  # .data[...]: 合成图像中当前类别的索引范围, :, 当前位置的行范围; 当前位置的列范围。cat(...): 选取类别c中的ipc个真实图像并将它们堆叠在一起，以填充合成图像中的每个位置。
         # no texture: 直接将 args.ipc 个真实图像复制到每个类别的合成图像位置上
         for c in range(num_classes):
-            image_syn.data[c * args.ipc:(c + 1) * args.ipc] = get_images(c, args.ipc).detach().data
+            image_syn.data[c*args.ipc:(c+1)*args.ipc] = get_images(c, args.ipc).detach().data
     else:  # 'noise' 合成图像的每个像素都将是随机生成的值
         print('initialize synthetic data from random noise')
 
@@ -179,7 +179,9 @@ def main(args):
     criterion = nn.CrossEntropyLoss().to(args.device)
     print('%s training begins' % get_time())
 
-    expert_dir = os.path.join(args.buffer_path, args.dataset)
+    # Input: {τ∗_i}: set of expert parameter trajectories trained on D_real
+    # 1. expert_dir 的构建
+    expert_dir = os.path.join(args.buffer_path, args.dataset)  # ./buffers/CIFAR10
     if args.dataset == "ImageNet":
         expert_dir = os.path.join(expert_dir, args.subset, str(args.res))
     if args.dataset in ["CIFAR10", "CIFAR100"] and not args.zca:
@@ -187,9 +189,8 @@ def main(args):
     expert_dir = os.path.join(expert_dir, args.model)
     print("Expert Dir: {}".format(expert_dir))
 
-    # Input: {τ∗_i}: set of expert parameter trajectories trained on D_real
-    # 加载提前训练好的 expert trajectory
-    if args.load_all:  # 从已有的缓冲区文件中 load 所有数据到 buffer 中
+    # 2. 加载提前训练好的 expert trajectory
+    if args.load_all:  # 从所有可用文件中 load 缓冲区数据，内容合并到 buffer 中
         buffer = []
         n = 0
         while os.path.exists(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n))):
@@ -197,7 +198,7 @@ def main(args):
             n += 1
         if n == 0:
             raise AssertionError("No buffers detected at {}".format(expert_dir))
-    else:  # 加载多个缓冲区文件中的数据到 buffer 中，并根据 max_files 和 max_experts 参数进行处理
+    else:  # 从特定的文件中 load 缓冲区数据到 buffer 中，并根据 max_experts 截取出特定数量的专家数据
         expert_files = []
         n = 0
         while os.path.exists(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n))):
@@ -206,10 +207,12 @@ def main(args):
         # change: 注释下面两行
         # if n == 0:
         #     raise AssertionError("No buffers detected at {}".format(expert_dir))
-        file_idx = 0
-        expert_idx = 0
+        
+        file_idx = 0  # 当前加载的缓冲区文件的索引
+        expert_idx = 0  # 当前在缓冲区文件中的专家数据的索引
         random.shuffle(expert_files)
-        # 对数据进行限制和裁剪
+        
+        # 对数据进行限制和截取
         if args.max_files is not None:
             expert_files = expert_files[:args.max_files]
         print("loading file {}".format(expert_files[file_idx]))
@@ -417,9 +420,8 @@ def main(args):
         for step in range(args.syn_steps):
             # line 9, 10: Sample a mini-batch of distilled images
             if not indices_chunks:  # 重新生成索引块(重新采样一批数据用于训练)
-                indices = torch.randperm(len(syn_images))  # 采样的图像索引：0, 6, ..., 500, ..., 375 --> []?
+                indices = torch.randperm(len(syn_images))  # 采样的图像索引：tensor([207, 83,...])
                 indices_chunks = list(torch.split(indices, args.batch_syn))  # 将indices切割为批次大小，生成一个索引块列表。每个索引块包含一批图像的索引
-                print('indices: {}, \nindices_chunks: {}'.format(indices, indices_chunks))
             these_indices = indices_chunks.pop()
             # 本次训练的数据样本
             x = syn_images[these_indices]  # 多张img

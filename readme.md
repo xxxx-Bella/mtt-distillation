@@ -17,10 +17,8 @@ The task of "Dataset Distillation" is to learn a small number of synthetic image
 
 <img src='docs/method.gif' width=600>
 
-Our method distills the synthetic dataset by directly optimizing the fake images to induce similar network training dynamics as the full,
-real dataset. We train "student" networks for many iterations on the synthetic data,
-measure the error in parameter space between the "student" and "expert" networks trained on real data,
-and back-propagate through all the student network updates to optimize the synthetic pixels.
+Our method distills the synthetic dataset by directly optimizing the fake images to induce similar network training dynamics as the full, real dataset. 
+We train "student" networks for many iterations on the synthetic data, measure the error in parameter space between the "student" and "expert" networks trained on real data, and back-propagate through all the student network updates to optimize the synthetic pixels.
 
 
 
@@ -44,27 +42,28 @@ Visualizations made using <a href="https://tri3d.in/">FAB3D</a>
 ### Getting Started
 
 First, download our repo:
-```bash
-git clone https://github.com/GeorgeCazenavette/mtt-distillation.git
+```
+# git clone https://github.com/GeorgeCazenavette/mtt-distillation.git
 cd mtt-distillation
+conda info -e
 ```
 
 For an express instillation, we include ```.yaml``` files.
 
 If you have an RTX 30XX GPU (or newer), run
 
-```bash
+```
 conda env create -f requirements_11_3.yaml
 ```
 
 If you have an RTX 20XX GPU (or older), run
 
-```bash
+```
 conda env create -f requirements_10_2.yaml
 ```
 
 You can then activate your  conda environment with
-```bash
+```
 conda activate distillation
 ```
 ##### Quadro Users Take Note:
@@ -75,17 +74,30 @@ If you experience indefinite hanging during training, try running the process wi
 ### Generating Expert Trajectories
 Before doing any distillation, you'll need to generate some expert trajectories using ```buffer.py```
 
-The following command will train 100 ConvNet models on CIFAR-100 with ZCA whitening for 50 epochs each:
-```bash
+1. The following command will train 100 ConvNet models on CIFAR-100 with ZCA whitening for 50 epochs each:
+(default ```path_to_dataset``` is ./data, and dataset will be download automatically.)
+(default ```path_to_buffer_storage``` is ./buffers.)
+(change --num_experts=10)
+```
 python buffer.py --dataset=CIFAR100 --model=ConvNet --train_epochs=50 --num_experts=100 --zca --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
 ```
+
 We used 50 epochs with the default learning rate for all of our experts.
-Worse (but still interesting) results can be obtained faster through training fewer experts by changing ```--num_experts```. Note that experts need only be trained once and can be re-used for multiple distillation experiments.
+Worse (but still interesting) results can be obtained faster through training fewer experts by changing ```--num_experts```. 
+Note that experts need only be trained once and can be re-used for multiple distillation experiments.
+
+2. The following command will train 100 ConvNet models on CIFAR-10 with ZCA whitening for 50 epochs each: (use default path)
+(change --num_experts=10)
+```
+python buffer.py --dataset=CIFAR10 --model=ConvNet --train_epochs=50 --num_experts=100 --zca --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
+```
+
 
 ### Distillation by Matching Training Trajectories
-The following command will then use the buffers we just generated to distill CIFAR-100 down to just 1 image per class:
-```bash
-python distill.py --dataset=CIFAR100 --ipc=1 --syn_steps=20 --expert_epochs=3 --max_start_epoch=20 --zca --lr_img=1000 --lr_lr=1e-05 --lr_teacher=0.01 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
+1. The following command will then use the buffers we just generated to distill `CIFAR-100` down to just `1` image per class:
+(add --Iteration=1000)
+```
+python distill.py --dataset=CIFAR100 --ipc=1 --syn_steps=20 --expert_epochs=3 --max_start_epoch=20 --zca --lr_img=1000 --lr_lr=1e-05 --lr_teacher=0.01 --Iteration=1000 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
 ```
 
 <img src='docs/animation.gif' width=600>
@@ -94,6 +106,11 @@ Please find a full list of hyper-parameters below:
 
 ![image](https://user-images.githubusercontent.com/18726777/184226412-7bd0d577-225b-487c-8c9c-23f6462ca7d0.png)
 
+2. The following command will then use the buffers we just generated to distill `CIFAR-10` down to `50` image per class:
+```
+python distill.py --dataset=CIFAR10 --ipc=50 --syn_steps=20 --expert_epochs=3 --max_start_epoch=20 --zca --lr_img=1000 --lr_lr=1e-05 --lr_teacher=0.01 --Iteration=1000 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
+```
+
 
 ### ImageNet
 Our method can also distill subsets of ```ImageNet``` into low-support synthetic sets.
@@ -101,9 +118,9 @@ Our method can also distill subsets of ```ImageNet``` into low-support synthetic
 When generating expert trajectories with ```buffer.py``` or distilling the dataset with ```distill.py```, you must designate a named subset of ImageNet with the ```--subset``` flag.
 
 For example,
-
-```bash
-python distill.py --dataset=ImageNet --subset=imagefruit --model=ConvNetD5 --ipc=1 --res=128 --syn_steps=20 --expert_epochs=2 --max_start_epoch=10 --lr_img=1000 --lr_lr=1e-06 --lr_teacher=0.01 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
+(add --Iteration=500)
+```
+python distill.py --dataset=ImageNet --subset=imagefruit --model=ConvNetD5 --ipc=1 --res=128 --syn_steps=20 --expert_epochs=2 --max_start_epoch=10 --lr_img=1000 --lr_lr=1e-06 --lr_teacher=0.01 --Iteration=500 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
 ```
 will distill the ```imagefruit``` subset (at 128x128 resolution) into the following 10 images
 
@@ -121,7 +138,7 @@ You can also use the same set of expert trajectories (except those using ZCA) to
 
 For example,
 
-```bash
+```
 python distill.py --texture --dataset=ImageNet --subset=imagesquawk --model=ConvNetD5 --ipc=1 --res=256 --syn_steps=20 --expert_epochs=2 --max_start_epoch=10 --lr_img=1000 --lr_lr=1e-06 --lr_teacher=0.01 --buffer_path={path_to_buffer_storage} --data_path={path_to_dataset}
 ```
 will distill the ```imagesquawk``` subset (at 256x256 resolution) into the following 10 textures
