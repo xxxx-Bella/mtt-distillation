@@ -203,7 +203,7 @@ def get_default_convnet_setting():
     net_width, net_depth, net_act, net_norm, net_pooling = 128, 3, 'relu', 'instancenorm', 'avgpooling'
     return net_width, net_depth, net_act, net_norm, net_pooling
 
-
+# 初始化 net 参数
 def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
@@ -291,7 +291,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
         net = None
         exit('DC error: unknown model')
 
-    if dist:
+    if dist:  # 分布式训练
         gpu_num = torch.cuda.device_count()
         if gpu_num>0:
             device = 'cuda'
@@ -324,6 +324,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     else:
         net.eval()
     
+    # 遍历训练集每个batch
     for i_batch, datum in enumerate(dataloader):
         # 初始化
         img = datum[0].float().to(args.device)  # tensor
@@ -348,7 +349,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         if args.dataset == "ImageNet" and mode != "train": 
             lab = torch.tensor([class_map[x.item()] for x in lab]).to(args.device)
 
-        n_b = lab.shape[0]  # 批次中样本的数量
+        n_b = lab.shape[0]  # 本批次中样本的数量
 
         # 使用神经网络模型进行前向传播
         output = net(img)

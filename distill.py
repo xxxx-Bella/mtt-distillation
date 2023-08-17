@@ -45,7 +45,7 @@ def main(args):
 
     # load (ZCA过的) dataset
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
-    # 获取用于评估的 model list
+    # 获取用于评估的 model list 
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
     # record performances of all experiments (not used)
     accs_all_exps = dict()
@@ -125,6 +125,7 @@ def main(args):
 
     for ch in range(channel):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+    print('\n')
     # --- ---
 
     def get_images(c, n):  # get random n images from class c (for initialize D_syn from random real images)
@@ -224,7 +225,8 @@ def main(args):
     best_acc = {m: 0 for m in model_eval_pool}
     best_std = {m: 0 for m in model_eval_pool}
 
-    # line 3: for each distillation step... do
+
+    # # line 3: for each distillation step... do
     # 模型训练循环，Iteration即 distillation steps
     for it in range(0, args.Iteration+1):
         save_this_it = False  # 是否在当前步骤保存最佳合成数据
@@ -238,7 +240,7 @@ def main(args):
             # 遍历每个评估模型
             for model_eval in model_eval_pool:
                 # 打印训练模型名称、当前评估模型名称、当前迭代数
-                print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
+                print('\n-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
                 # 打印数据增强信息
                 if args.dsa:
                     print('DSA augmentation strategy: \n', args.dsa_strategy)
@@ -360,7 +362,7 @@ def main(args):
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
         # 构建和配置 student_net
-        student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model. dist表示分布式训练
+        student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model.  dist表示分布式训练
         student_net = ReparamModule(student_net)  # 将其包装在ReparamModule模块中，为了支持参数的重参数化
 
         if args.distributed:  # 用 DataParallel 对象将模型包装起来，这允许在多个GPU上并行训练
@@ -373,7 +375,7 @@ def main(args):
         # # line 4: Sample expert trajectory τ* ~ {τ*_i} with τ*={θ*_i}(0->T)
         if args.load_all:
             expert_trajectory = buffer[np.random.randint(0, len(buffer))]
-        else:
+        else:  # default 'False'
             expert_trajectory = buffer[expert_idx]
             expert_idx += 1
             if expert_idx == len(buffer):
@@ -412,7 +414,7 @@ def main(args):
 
         # 用于记录参数损失和距离
         param_loss_list = []
-        param_dist_list = []
+        param_dist_list = []  # Param. Distance to Target
         indices_chunks = []  # 用于存储索引块：每次循环，从中获取部分索引，处理批量数据
 
         # # line 8: for n = 0 → N − 1 do
@@ -537,9 +539,9 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')
     parser.add_argument('--buffer_path', type=str, default='./buffers', help='buffer path')
 
-    parser.add_argument('--expert_epochs', type=int, default=3, help='how many expert epochs the target params are')
-    parser.add_argument('--syn_steps', type=int, default=20, help='how many steps to take on synthetic data')
-    parser.add_argument('--max_start_epoch', type=int, default=25, help='max epoch we can start at')
+    parser.add_argument('--expert_epochs', type=int, default=3, help='how many expert epochs the target params are')  # M+
+    parser.add_argument('--syn_steps', type=int, default=20, help='how many steps to take on synthetic data')  # N
+    parser.add_argument('--max_start_epoch', type=int, default=25, help='max epoch we can start at')  # T+
 
     parser.add_argument('--zca', action='store_true', help="do ZCA whitening")  # 降低输入的冗余性
 
