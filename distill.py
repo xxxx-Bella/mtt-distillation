@@ -225,8 +225,12 @@ def main(args):
     best_acc = {m: 0 for m in model_eval_pool}
     best_std = {m: 0 for m in model_eval_pool}
 
+<<<<<<< HEAD
+    # line 3: for each distillation step (N)... do
+=======
 
     # # line 3: for each distillation step... do
+>>>>>>> 9357a74d149ea3271adf3e2b33940424223b8946
     # 模型训练循环，Iteration即 distillation steps
     for it in range(0, args.Iteration+1):
         save_this_it = False  # 是否在当前步骤保存最佳合成数据
