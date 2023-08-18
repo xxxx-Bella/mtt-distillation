@@ -310,7 +310,7 @@ def get_time():
 
 # 训练/测试模型的一次迭代
 def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
-    loss_avg, acc_avg, num_exp = 0, 0, 0  # num_exp 样本数量
+    loss_avg, acc_avg, num_exp = 0, 0, 0  # num_exp: 所有batch的样本总量
     net = net.to(args.device)
 
     # 其他 dataset: 类别的标识符与其在数据集中的位置一致: 
@@ -366,7 +366,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
             loss.backward()
             optimizer.step()
 
-    loss_avg /= num_exp  # each teacher_net
+    loss_avg /= num_exp  # for each teacher_net
     acc_avg /= num_exp
 
     return loss_avg, acc_avg

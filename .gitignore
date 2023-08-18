@@ -1,13 +1,5 @@
-.idea
-
-# 忽略以下文件夹下的所有文件
 buffers/
 wandb/
 logged_files/
 data/
-
-# 写入：echo -e "buffers/\nwandb/\nlogged_files/" > .gitignore
-# -e 激活转义字符; > 覆盖写入
-
-# 删除空行：sed '/^$/d' .gitignore 
-# //匹配范围 ^匹配字符串开头 $结尾 d删除匹配字符串
+.ipynb_checkpoints/
