@@ -3,3 +3,4 @@ wandb/
 logged_files/
 data/
 .ipynb_checkpoints/
+__pycache__/
