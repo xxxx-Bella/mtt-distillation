@@ -14,6 +14,7 @@ import wandb
 import copy
 import random
 from reparam_module import ReparamModule
+import gc
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -161,7 +162,7 @@ def main(args):
                         # 用随机选取的真实图像的一部分来填充
                         image_syn.data[c*args.ipc:(c+1)*args.ipc, :, i*im_size[0]:(i+1)*im_size[0], j*im_size[1]:(j+1)*im_size[1]] = torch.cat(
                             [get_images(c, 1).detach().data for s in range(args.ipc)])  # .data[...]: 合成图像中当前类别的索引范围, :, 当前位置的行范围; 当前位置的列范围。cat(...): 选取类别c中的ipc个真实图像并将它们堆叠在一起，以填充合成图像中的每个位置。
-        # no texture: 直接将 args.ipc 个真实图像复制到每个类别的合成图像位置上
+        # no_texture: 直接将 args.ipc 个真实图像复制到每个类别的合成图像位置上
         for c in range(num_classes):
             image_syn.data[c*args.ipc:(c+1)*args.ipc] = get_images(c, args.ipc).detach().data
     else:  # 'noise' 合成图像的每个像素都将是随机生成的值
@@ -172,7 +173,7 @@ def main(args):
     image_syn = image_syn.detach().to(args.device).requires_grad_(True)
     syn_lr = syn_lr.detach().to(args.device).requires_grad_(True)
 
-    # 创建优化器
+    # 创建优化器 to-do
     optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)  # 用于更新 image_syn
     optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)  # 用于更新 syn_lr
     optimizer_img.zero_grad()  # 梯度清零，以便在每次迭代开始时重新计算梯度
@@ -192,7 +193,7 @@ def main(args):
 
     # 2. 加载提前训练好的 expert trajectory
     if args.load_all:  # 从所有可用文件中 load 缓冲区数据，内容合并到 buffer 中
-        buffer = []
+        buffer = []  # all data of {}.pt
         n = 0
         while os.path.exists(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n))):
             buffer = buffer + torch.load(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n)))
@@ -200,7 +201,7 @@ def main(args):
         if n == 0:
             raise AssertionError("No buffers detected at {}".format(expert_dir))
     else:  # 从特定的文件中 load 缓冲区数据到 buffer 中，并根据 max_experts 截取出特定数量的专家数据
-        expert_files = []
+        expert_files = []  # dirs: [expert_dir/replay_buffer_{}.pt, ..]
         n = 0
         while os.path.exists(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n))):
             expert_files.append(os.path.join(expert_dir, "replay_buffer_{}.pt".format(n)))
@@ -209,28 +210,24 @@ def main(args):
         # if n == 0:
         #     raise AssertionError("No buffers detected at {}".format(expert_dir))
         
-        file_idx = 0  # 当前加载的缓冲区文件的索引
-        expert_idx = 0  # 当前在缓冲区文件中的专家数据的索引
+        file_idx = 0  # idx of current {}.pt file
+        expert_idx = 0  # 选择预训练参数的索引
         random.shuffle(expert_files)
-        
+
         # 对数据进行限制和截取
         if args.max_files is not None:
-            expert_files = expert_files[:args.max_files]
+            expert_files = expert_files[:args.max_files]  # max_files: max num of {}.pt files. e.g. expert_files包含最多5个.pt文件路径
         print("loading file {}".format(expert_files[file_idx]))
-        buffer = torch.load(expert_files[file_idx])
-        if args.max_experts is not None:  # per file
+        buffer = torch.load(expert_files[file_idx])  # load data from ./{}.pt
+        if args.max_experts is not None:  # per file, default=None
             buffer = buffer[:args.max_experts]
         random.shuffle(buffer)
 
     best_acc = {m: 0 for m in model_eval_pool}
     best_std = {m: 0 for m in model_eval_pool}
 
-<<<<<<< HEAD
-    # line 3: for each distillation step (N)... do
-=======
-
+    
     # # line 3: for each distillation step... do
->>>>>>> 9357a74d149ea3271adf3e2b33940424223b8946
     # 模型训练循环，Iteration即 distillation steps
     for it in range(0, args.Iteration+1):
         save_this_it = False  # 是否在当前步骤保存最佳合成数据
@@ -249,7 +246,7 @@ def main(args):
                 if args.dsa:
                     print('DSA augmentation strategy: \n', args.dsa_strategy)
                     print('DSA augmentation parameters: \n', args.dsa_param.__dict__)
-                else:
+                else:  # no dsa
                     print('DC augmentation parameters: \n', args.dc_aug_param)
 
                 accs_test = []
@@ -268,7 +265,7 @@ def main(args):
                     # 创建用于评估的图像和标签副本：确保在评估过程中不会对原始数据造成任何影响
                     image_syn_eval, label_syn_eval = copy.deepcopy(image_save.detach()), copy.deepcopy(eval_labs.detach()) # avoid any unaware modification
 
-                    args.lr_net = syn_lr.item()  # 评估时的学习率
+                    args.lr_net = syn_lr.item()  # lr of evaluation
                     _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
@@ -354,7 +351,7 @@ def main(args):
                         for clip_val in [2.5]:
                             std = torch.std(image_save)
                             mean = torch.mean(image_save)
-                            upsampled = torch.clip(image_save, min=mean - clip_val * std, max=mean + clip_val * std)
+                            upsampled = torch.clip(image_save, min=mean-clip_val*std, max=mean+clip_val*std)
                             if args.dataset != "ImageNet":
                                 upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                                 upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
@@ -362,7 +359,7 @@ def main(args):
                             wandb.log({"Clipped_Reconstructed_Images/std_{}".format(clip_val): wandb.Image(
                                 torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
-        # 将合成数据的学习率记录到W&B日志中，用于追踪学习率的变化
+        # record syn_lr of each iter on W&B
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
         # 构建和配置 student_net
@@ -374,9 +371,11 @@ def main(args):
         
         student_net.train()  # 设置为训练模式，从而启用一些训练功能，如 Dropout 和批量归一化的更新
 
-        num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])  # 计算模型的总参数数量
+        # .paramters(): generate each param tensor; p.size(): shape of each tensor; np.prod(): compute product
+        # []: a list of num_elems, each presents num_elem of a param tensor
+        num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])  # num_elem of all params in net
 
-        # # line 4: Sample expert trajectory τ* ~ {τ*_i} with τ*={θ*_i}(0->T)
+        # # line 4: Sample expert trajectory: τ* ~ {τ*(i)}, with τ*={θ*(i)}(0->T)
         if args.load_all:
             expert_trajectory = buffer[np.random.randint(0, len(buffer))]
         else:  # default 'False'
@@ -385,6 +384,7 @@ def main(args):
             if expert_idx == len(buffer):
                 expert_idx = 0
                 file_idx += 1
+                # 重置 file_idx
                 if file_idx == len(expert_files):
                     file_idx = 0
                     random.shuffle(expert_files)
@@ -396,41 +396,44 @@ def main(args):
                     buffer = buffer[:args.max_experts]
                 random.shuffle(buffer)
         
-        # # line 5: Choose random start epoch
+        # # line 5: Choose a random start epoch (t <= T+)
         start_epoch = np.random.randint(0, args.max_start_epoch)
 
         # # line 6, 7: Initialize student network with expert params
-        # 获取 expert_trajectory 在 start_epoch 时刻的模型参数
-        starting_params = expert_trajectory[start_epoch]
-
-        target_params = expert_trajectory[start_epoch+args.expert_epochs]  # 作为 student_net 优化的目标参数 (expert params)
-        target_params = torch.cat([p.data.to(args.device).reshape(-1) for p in target_params], 0)  # 将这些参数cat成一个一维张量
+        # expert_trajectory params of epoch t
+        starting_params = expert_trajectory[start_epoch]  # θ*(t), shape=(num_param_tensor, ), each param has diff shape
         
-        # 创建一个包含学生模型参数的list: 将 starting_params 中每个参数张量拉平成一维，并cat成一个一维张量。并设置该tensor需要计算梯度，for后续优化中更新参数
+        # target of student_net optimization
+        target_params = expert_trajectory[start_epoch+args.expert_epochs]  # θ*(t+M), shape=(num_param_tensor, )
+        # concat each p in target_params on dimension 0
+        target_params = torch.cat([p.data.to(args.device).reshape(-1) for p in target_params], 0)  # shape=(1, total_num_param_tensor)
+        
+        # θ^(t) := θ*(t), shape=(1, total_num_param_tensor), require grad, for later updating. θ^(t), then θ^(t+1), ... θ^(t+N)
         student_params = [torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0).requires_grad_(True)]
         
-        # 同上，将 starting_params 中的每个参数张量拉平成一维，并cat成一个一维张量（在初始化student_params之后进行，以备后续使用）
+        # after initializing student_params, for calculating param_dist later. shape=(1, total_num_param_tensor)
         starting_params = torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0)
 
         # as training input
         syn_images = image_syn
         y_hat = label_syn.to(args.device)
 
-        # 用于记录参数损失和距离
+        # record loss and distance
         param_loss_list = []
         param_dist_list = []  # Param. Distance to Target
-        indices_chunks = []  # 用于存储索引块：每次循环，从中获取部分索引，处理批量数据
+        indices_chunks = []  # restore indices: to get mini-batch of each step
 
         # # line 8: for n = 0 → N − 1 do
-        # 在合成数据上训练更新 student_params，使其逼近 target_params
+        # update student_params on D_syn, approximating target_params
         for step in range(args.syn_steps):
-            # line 9, 10: Sample a mini-batch of distilled images
-            if not indices_chunks:  # 重新生成索引块(重新采样一批数据用于训练)
-                indices = torch.randperm(len(syn_images))  # 采样的图像索引：tensor([207, 83,...])
-                indices_chunks = list(torch.split(indices, args.batch_syn))  # 将indices切割为批次大小，生成一个索引块列表。每个索引块包含一批图像的索引
-            these_indices = indices_chunks.pop()
-            # 本次训练的数据样本
-            x = syn_images[these_indices]  # 多张img
+            # line 9, 10: Sample a mini-batch of distilled images (SGD: using a mini-batch to calculate grad each step)
+            # b_(t+n) ~ D_syn (n: step)
+            if not indices_chunks:  # re-generate indices (re-sample a mini-batch)
+                indices = torch.randperm(len(syn_images))  # indices: tensor([207, 83,...])
+                indices_chunks = list(torch.split(indices, args.batch_syn))  # split indices into batch_syn size, each chunk contains a batch of indices (batch_syn=None, one chunk)
+            these_indices = indices_chunks.pop()  # pop the last chunk
+            # a mini-batch
+            x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
             if args.texture:  # 纹理增强
@@ -446,15 +449,23 @@ def main(args):
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param)
             
             # # line 11, 12: Update student network w.r.t. classification loss
-            if args.distributed:  # 若有多个GPU则启用分布式训练，将最新的student_params复制为多个副本
+            if args.distributed:  # 若有多个 GPU 则启用分布式训练，将最新的 student_params 复制为多个副本
                 forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)
             else:
                 forward_params = student_params[-1]
+            
             # 输入 x 进行前向传播，得到输出 x
             x = student_net(x, flat_param=forward_params)
+            '''
+            buffer = torch.load(expert_files[file_idx])
+            expert_trajectory = buffer[expert_idx]            # 相当于buffer[-1]
+            starting_params = expert_trajectory[start_epoch]  # 相当于buffer[-1][-1]  start_epoch 第2个 -1
+            student_params = [torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0).requires_grad_(True)]
+            forward_params = student_params[-1]
+            '''
             # 计算交叉熵损失
             ce_loss = criterion(x, this_y)
-            # 计算交叉熵损失对student_params的梯度
+            # 计算交叉熵损失对 student_params 的梯度
             grad = torch.autograd.grad(ce_loss, student_params[-1], create_graph=True)[0]
             # 更新student_params (减去 梯度与学习率的乘积)，逼近目标参数
             student_params.append(student_params[-1] - syn_lr * grad)
@@ -464,34 +475,35 @@ def main(args):
         param_loss = torch.tensor(0.0).to(args.device)
         param_dist = torch.tensor(0.0).to(args.device)
         # 计算均方误差损失 ending student & expert params
-        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")  # ||θ(k+N) - θ(k+M)_T||
-        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")     # ||θ(k)_T - θ(k+M)_T||
-
+        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")  # ||θ^(t+N) - θ*(t+M)||
+        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")     # ||θ*(t) - θ*(t+M)||
         param_loss_list.append(param_loss)
         param_dist_list.append(param_dist)
-        # 平均 loss 和 distance。num_params 模型总参数数量
-        param_loss /= num_params
-        param_dist /= num_params
-        # 归一化的 loss
-        param_loss /= param_dist
-        # 最终的 loss of trajectory matching
-        grand_loss = param_loss
+        param_loss /= num_params  # 平均 loss 和 distance
+        param_dist /= num_params  # num_params: total num of net
+
+        param_loss /= param_dist  # normalized loss
+        grand_loss = param_loss   # loss of trajectory matching
 
         # line 16: Update D_syn and α w.r.t loss
-        # 优化器更新，梯度清零
-        optimizer_img.zero_grad()
+        optimizer_img.zero_grad()  # clear grad of all optimized Variables
         optimizer_lr.zero_grad()
-        # 反向传播计算梯度
-        grand_loss.backward()
-        # 用优化器对模型参数（img_syn, syn_lr）进行更新
-        optimizer_img.step()
+
+        grand_loss.backward()      # backward: calculate grad
+
+        optimizer_img.step()       # optimize img_syn, syn_lr
         optimizer_lr.step()
+
         # 记录到 W&B 日志
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),
                    "Start_Epoch": start_epoch})
         # 释放之前用于计算梯度的 student_params
         for _ in student_params:
             del _
+
+        # 定时清内存
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # 打印训练进度：每隔一段迭代次数，打印当前迭代的时间和损失
         if it % 10 == 0:
@@ -553,8 +565,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--no_aug', type=bool, default=False, help='this turns off diff aug during distillation')
 
-    parser.add_argument('--texture', action='store_true', help="will distill textures instead")
-    parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
+    parser.add_argument('--texture', action='store_true', help="will distill textures instead")  # False
+    parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')   # for texture
     parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
 
     parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
