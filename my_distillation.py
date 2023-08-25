@@ -134,12 +134,15 @@ def main(args):
         model = get_network('ConvNet', channel, num_classes, im_size).to(args.device)
         model.train()
 
+        num_epochs = args.Epoch
+        lr = float(args.syn_lr)
+        lr_schedule = [num_epochs//2+1]
+
         # Define loss function and optimizer
         criterion = nn.CrossEntropyLoss().to(args.device)
-        optimizer = optim.SGD(model.parameters(), lr=args.syn_lr, momentum=0.5)  # for updating params
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.5)  # for updating params
 
-        num_epochs = args.Epoch
-        for epoch in range(args.Epoch):  # 0~999
+        for epoch in range(args.Epoch):  # 0~1999
             '''Train'''
             # using 'all data' each epoch (GD)
             with torch.no_grad():
@@ -191,7 +194,11 @@ def main(args):
                 print(f'\nEpoch [{epoch+1}], Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.4f}')
                 wandb.log({'Accuracy': test_acc}, step=it)
                 wandb.log({'Max Accuracy': best_acc}, step=it)
-    
+            
+            if epoch in lr_schedule:
+                lr *= 0.1
+                optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.5, weight_decay=0.0005)
+            
     print(f'Max Accuracy = {best_acc}')
 
 
