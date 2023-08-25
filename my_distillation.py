@@ -16,8 +16,6 @@ from my_utils import TensorDataset, get_time, get_network, ConvNetD3, ParamDiffA
 def main(args):
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # # DATA
-    # 设置 ZCA 预处理
     # args.dataset == 'CIFAR10':
     channel = 3
     im_size = (32, 32)
@@ -41,7 +39,7 @@ def main(args):
     images = torch.load(img_path)
     labels = torch.load(lab_path)
 
-    # Create DataLoader
+    # Create Dataset
     train_dataset = TensorDataset(images, labels)
     test_dataset = datasets.CIFAR10(root=args.data_path, train=False, transform=transform, download=True)
 
@@ -74,44 +72,55 @@ def main(args):
 
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2)
     
+    # Get train_images and train_labels
     best_imgs, best_labs = [], []
-    indices_class = [[] for c in range(num_classes)]  # each sub-list length=num_classes, for initialize train_images
 
-    for i in tqdm.tqdm(range(len(train_dataset))):
-        sample = train_dataset[i]
-        best_imgs.append(torch.unsqueeze(sample[0], dim=0))  # img: (C, H, W) --> (1, C, H, W) 
-        best_labs.append(torch.tensor(sample[1]).item())     # item()将tensor中的单个值提取出来，作为标量值
+    # # 1. original, available
+    # indices_class = [[] for c in range(num_classes)]  # each sub-list length=num_classes, for initialize train_images
 
-    for i, lab in tqdm.tqdm(enumerate(best_labs)):
-        indices_class[lab].append(i)
+    # for i in tqdm.tqdm(range(len(train_dataset))):
+    #     sample = train_dataset[i]
+    #     best_imgs.append(torch.unsqueeze(sample[0], dim=0))  # img: (C, H, W) --> (1, C, H, W) 
+    #     best_labs.append(torch.tensor(sample[1]).item())     # item() extract value of tensor, as scalar
+
+    # for i, lab in tqdm.tqdm(enumerate(best_labs)):
+    #     indices_class[lab].append(i)
     
-    best_imgs = torch.cat(best_imgs, dim=0).to("cpu")
-    best_labs = torch.tensor(best_labs, dtype=torch.long, device="cpu")
+    # best_imgs = torch.cat(best_imgs, dim=0).to("cpu")
+    # best_labs = torch.tensor(best_labs, dtype=torch.long, device="cpu")
 
-    
-    train_images = torch.randn(size=(num_classes*args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
-    train_labels = torch.tensor([np.ones(args.ipc, dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1)
+    # train_images = torch.randn(size=(num_classes*args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
+    # train_labels = torch.tensor([np.ones(args.ipc, dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1)
 
-    for c in range(num_classes):
-        # get random ipc images from class c
-        idx_shuffle = np.random.permutation(indices_class[c])[: args.ipc]
-        imgs = best_imgs[idx_shuffle]
-        train_images.data[c*args.ipc: (c+1)*args.ipc] = imgs.detach().data
+    # for c in range(num_classes):
+    #     # get random ipc images from class c
+    #     idx_shuffle = np.random.permutation(indices_class[c])[: args.ipc]
+    #     imgs = best_imgs[idx_shuffle]
+    #     train_images.data[c*args.ipc: (c+1)*args.ipc] = imgs.detach().data
 
-    train_images = train_images.detach().to(args.device).requires_grad_(True)
-    
+    # train_images = train_images.detach().to(args.device).requires_grad_(True)
+
+    # # 2. try, available
+    for i in range(len(train_dataset)):
+        im, lab = train_dataset[i]
+        best_imgs.append(im)
+        best_labs.append(lab)
+
+    train_images = torch.stack(best_imgs).detach()
+    train_labels = torch.tensor(best_labs).detach()
+
     args.dsa_param = ParamDiffAug()
-    dsa_params = args.dsa_param     # 暂存，后面重新赋值给args
+    dsa_params = args.dsa_param     # tmp store, re-assign to args
     
     if args.zca:
-        zca_trans = args.zca_trans  # 暂存
+        zca_trans = args.zca_trans  # tmp store
     else:
         zca_trans = None
 
     # initialize wandb log
-    wandb.init(sync_tensorboard=False,          # 不与 TensorBoard 同步
+    wandb.init(sync_tensorboard=False,          # not synchro with TensorBoard
                project="My_Synset_Evaluation",
-               job_type="CleanRepo",            # 工作类型
+               job_type="CleanRepo",
                config=args)
     args = type('', (), {})()
     for key in wandb.config._items:
@@ -146,7 +155,7 @@ def main(args):
             '''Train'''
             # using 'all data' each epoch (GD)
             with torch.no_grad():
-                x = train_images.to(args.device)  #
+                x = train_images.to(args.device)
             y = train_labels.to(args.device)
             
             if args.dsa:
@@ -171,11 +180,11 @@ def main(args):
                     for i_batch, datum in enumerate(test_loader):
                         img = datum[0].float().to(args.device)
                         lab = datum[1].long().to(args.device)
-                        # augment 数据增强
+
                         if args.dsa:
                             img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
 
-                        n_b = lab.shape[0]  # 本 batch 样本的数量
+                        n_b = lab.shape[0]  # num of this batch
 
                         output = model(img)
                         batch_loss = criterion(output, lab)
