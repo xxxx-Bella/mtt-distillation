@@ -5,12 +5,11 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from reparam_module import ReparamModule
 import tqdm
 import kornia as K
 import wandb
 import numpy as np
-from my_utils import TensorDataset, get_time, get_network, ConvNetD3, ParamDiffAug, DiffAugment
+from my_utils import TensorDataset, get_network, ParamDiffAug, DiffAugment
 
 
 def main(args):
@@ -75,32 +74,6 @@ def main(args):
     # Get train_images and train_labels
     best_imgs, best_labs = [], []
 
-    # # 1. original, available
-    # indices_class = [[] for c in range(num_classes)]  # each sub-list length=num_classes, for initialize train_images
-
-    # for i in tqdm.tqdm(range(len(train_dataset))):
-    #     sample = train_dataset[i]
-    #     best_imgs.append(torch.unsqueeze(sample[0], dim=0))  # img: (C, H, W) --> (1, C, H, W) 
-    #     best_labs.append(torch.tensor(sample[1]).item())     # item() extract value of tensor, as scalar
-
-    # for i, lab in tqdm.tqdm(enumerate(best_labs)):
-    #     indices_class[lab].append(i)
-    
-    # best_imgs = torch.cat(best_imgs, dim=0).to("cpu")
-    # best_labs = torch.tensor(best_labs, dtype=torch.long, device="cpu")
-
-    # train_images = torch.randn(size=(num_classes*args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
-    # train_labels = torch.tensor([np.ones(args.ipc, dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1)
-
-    # for c in range(num_classes):
-    #     # get random ipc images from class c
-    #     idx_shuffle = np.random.permutation(indices_class[c])[: args.ipc]
-    #     imgs = best_imgs[idx_shuffle]
-    #     train_images.data[c*args.ipc: (c+1)*args.ipc] = imgs.detach().data
-
-    # train_images = train_images.detach().to(args.device).requires_grad_(True)
-
-    # # 2. try, available
     for i in range(len(train_dataset)):
         im, lab = train_dataset[i]
         best_imgs.append(im)
@@ -149,7 +122,7 @@ def main(args):
 
         # Define loss function and optimizer
         criterion = nn.CrossEntropyLoss().to(args.device)
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.5)  # for updating params
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)  # for updating params
 
         for epoch in range(args.Epoch):  # 0~1999
             '''Train'''
@@ -172,7 +145,7 @@ def main(args):
                 print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
             '''Test'''
-            # once a it
+            # once a iter
             if (epoch+1) == num_epochs:
                 model.eval()
                 test_loss, test_acc, num_exp = 0, 0, 0
@@ -206,10 +179,9 @@ def main(args):
             
             if epoch in lr_schedule:
                 lr *= 0.1
-                optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.5, weight_decay=0.0005)
+                optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
             
     print(f'Max Accuracy = {best_acc}')
-
 
     wandb.finish()
 

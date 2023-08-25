@@ -134,7 +134,7 @@ def set_seed_DiffAug(param):
         torch.random.manual_seed(param.latestseed)
         param.latestseed += 1
 
-# 使用 DSA 的数据增强的具体实现：根据strategy调用对应的rand_xx()函数
+# DSA data augmentation: use different rand_xx() according to strategy
 def DiffAugment(x, strategy='', seed = -1, param = None):
     if seed == -1:
         param.batchmode = False
@@ -147,9 +147,9 @@ def DiffAugment(x, strategy='', seed = -1, param = None):
         return x
 
     if strategy:
-        if param.aug_mode == 'M':  # original
+        if param.aug_mode == 'M':         # original
             for p in strategy.split('_'):
-                for f in AUGMENT_FNS[p]:  # eg. 'crop': [rand_crop], 若p='crop', 则f=rand_crop()
+                for f in AUGMENT_FNS[p]:  # eg. if p='crop', f=rand_crop()
                     x = f(x, param)
         elif param.aug_mode == 'S':
             pbties = strategy.split('_')
@@ -169,7 +169,6 @@ def get_network(model, channel, num_classes, im_size=(32, 32)):
     return net
 
 
-
 def get_time():
     return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
 
@@ -178,23 +177,21 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     loss_avg, acc_avg, num_exp = 0, 0, 0  # num_exp: 所有batch的样本总量
     net = net.to(args.device)
 
-    # 训练/评估模式
+    # mode
     if mode == 'train':
         net.train()
     else:
         net.eval()
     
-    # 遍历训练集每个batch
     for i_batch, datum in enumerate(dataloader):
-        # 初始化
         img = datum[0].float().to(args.device)  # tensor
         lab = datum[1].long().to(args.device)
 
-        # augment 数据增强
+        # DSA augmentation
         if aug and args.dsa:
             img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
 
-        n_b = lab.shape[0]  # 本batch中样本的数量
+        n_b = lab.shape[0]  # num of this batch
 
         # 使用神经网络模型进行前向传播
         output = net(img)
@@ -205,7 +202,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
         acc_avg += acc
         num_exp += n_b
 
-        # train模式，反向传播和 net参数更新
+        # train, backward and update net
         if mode == 'train':
             optimizer.zero_grad()
             loss.backward()
@@ -217,21 +214,21 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     return loss_avg, acc_avg
 
 
-# 评估一个 random model 在 D_syn 上的性能
+# evaluate a random model on D_syn
 def evaluate_synset(it_eval, net, images_train, labels_train, test_loader, args, return_loss=False, texture=False):
     net = net.to(args.device)  # a random model
     images_train = images_train.to(args.device)  # eval_syn_img
     labels_train = labels_train.to(args.device)  # eval_syn_lab
     lr = float(args.lr_net)                      # syn_lr
     Epoch = int(args.epoch_eval_train)           # epochs to train a model with D_syn (default=1000)
-    lr_schedule = [Epoch//2+1]                   # 在训练迭代的一半处降低学习率 (ep=501)
+    lr_schedule = [Epoch//2+1]                   # reduce lr in the mid epoch (ep=501)
     
     # update net, only for epoch('train')
     optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 
     criterion = nn.CrossEntropyLoss().to(args.device)
     
-    # 若 batch_size >= 500(ipc*num_classes),表示 GD; 否则是 SGD (此处 batch_train=256<500 是 SGD)
+    # if batch_size >= 500(ipc*num_classes), then GD; else SGD (here batch_train=256<500, SGD)
     dst_train = TensorDataset(images_train, labels_train)
     train_loader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
 
@@ -240,22 +237,23 @@ def evaluate_synset(it_eval, net, images_train, labels_train, test_loader, args,
     loss_train_list = []
 
     for ep in tqdm.tqdm(range(Epoch+1)):  # ep = 0~Epoch
-        # epoch() 执行训练
+        # epoch() train
         loss_train, acc_train = epoch('train', train_loader, net, optimizer, criterion, args, aug=True, texture=texture)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
         
-        # 最后一个 epoch 测试
+        # last epoch
         if ep == Epoch:
             with torch.no_grad():
-                # epoch() 执行测试，计算测试准确率
+                # epoch() test
                 loss_test, acc_test = epoch('test', test_loader, net, optimizer, criterion, args, aug=False)
-        # 调整学习率
+        
+        # reduce lr
         if ep in lr_schedule:
             lr *= 0.1
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
     
-    # 评估过程的训练时间
+    # train time of evaluation
     time_train = time.time() - start
 
     print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
